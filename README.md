@@ -92,7 +92,11 @@ and the Todoist client need to run in the logged-in user session. It runs
 every 15 minutes and logs to `var/sync-out.log` (routine activity) /
 `var/sync-error.log` (actual failures/tracebacks only — safe to share when
 reporting an issue, since it won't also contain the full routine sync
-history).
+history). Both are rotating logs (1 MB cap, 3 backups kept, ~4 MB max per
+file) written directly by the script itself, not via launchd's raw
+stdout/stderr redirection — so they won't grow unbounded, but running the
+script manually in a terminal no longer prints anything live; `tail -f
+var/sync-out.log` instead.
 
 The agent points at `deploy/todoist-sync`, a small wrapper script, rather
 than the venv's Python binary directly — otherwise macOS's Login Items list

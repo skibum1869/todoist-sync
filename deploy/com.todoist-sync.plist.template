@@ -18,11 +18,5 @@
 
     <key>RunAtLoad</key>
     <false/>
-
-    <key>StandardOutPath</key>
-    <string>__PROJECT_ROOT__/var/sync-out.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>__PROJECT_ROOT__/var/sync-error.log</string>
 </dict>
 </plist>

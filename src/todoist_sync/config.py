@@ -20,3 +20,5 @@ VAR_DIR = PROJECT_ROOT / "var"
 VAR_DIR.mkdir(exist_ok=True)
 VAR_DIR.chmod(0o700)
 STATE_PATH = VAR_DIR / "state.json"
+LOG_OUT_PATH = VAR_DIR / "sync-out.log"
+LOG_ERROR_PATH = VAR_DIR / "sync-error.log"

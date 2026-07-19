@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sys
 from datetime import datetime, time
 
 from . import state
-from .config import LIST_NAME, STATE_PATH, TODOIST_API_KEY
+from .config import LIST_NAME, LOG_ERROR_PATH, LOG_OUT_PATH, STATE_PATH, TODOIST_API_KEY
 from .reminders_bridge import RemindersBridge
 from .todoist_bridge import TodoistBridge
 
+_MAX_LOG_BYTES = 1_000_000  # 1 MB per file
+_LOG_BACKUP_COUNT = 3
+
+
 class _MaxLevelFilter(logging.Filter):
-    """Excludes records at or above the given level, for the stdout handler
-    so routine logging doesn't get duplicated into the stderr/error log."""
+    """Excludes records at or above the given level, for the routine-log
+    handler so it doesn't duplicate what the error log already has."""
 
     def __init__(self, below_level: int):
         super().__init__()
@@ -25,12 +30,19 @@ class _MaxLevelFilter(logging.Filter):
 def _configure_logging() -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    info_handler = logging.StreamHandler(sys.stdout)
+    # Write directly to the log files (rotating, capped) rather than through
+    # stdout/stderr + launchd's StandardOutPath/StandardErrorPath, which had
+    # no size limit and would grow forever.
+    info_handler = logging.handlers.RotatingFileHandler(
+        LOG_OUT_PATH, maxBytes=_MAX_LOG_BYTES, backupCount=_LOG_BACKUP_COUNT
+    )
     info_handler.setLevel(logging.INFO)
     info_handler.addFilter(_MaxLevelFilter(logging.ERROR))
     info_handler.setFormatter(formatter)
 
-    error_handler = logging.StreamHandler(sys.stderr)
+    error_handler = logging.handlers.RotatingFileHandler(
+        LOG_ERROR_PATH, maxBytes=_MAX_LOG_BYTES, backupCount=_LOG_BACKUP_COUNT
+    )
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
 
