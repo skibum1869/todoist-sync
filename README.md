@@ -73,7 +73,8 @@ turned out to clutter every synced item's notes field.
 ```
 src/todoist_sync/          Python package — Todoist API, sync logic, state, CLI entry point
 swift/reminders-bridge/    Swift/EventKit helper the Python side shells out to for all Reminders access
-deploy/                    launchd LaunchAgent, wrapper script, installer
+swift/wake-watcher/        Swift/NSWorkspace helper that fires a sync shortly after the Mac wakes
+deploy/                    launchd LaunchAgents, wrapper script, installer
 var/                       generated at runtime — state.json, sync-out.log, sync-error.log
 ```
 
@@ -119,7 +120,7 @@ var/sync-out.log` instead.
 The agent points at `deploy/todoist-sync`, a small wrapper script, rather
 than the venv's Python binary directly — otherwise macOS's Login Items list
 shows the background item as "Python" instead of something recognizable.
-Both that script and the compiled Swift binary are ad-hoc code-signed
+Both that script and the compiled Swift binaries are ad-hoc code-signed
 (`codesign -s -`) to clear the "unidentified developer" warning macOS shows
 for unsigned executables running as background items; that's a local-only
 signature, not tied to an Apple Developer ID, and needs re-running after
@@ -135,3 +136,16 @@ Resolves paths automatically, so it works regardless of where the repo is
 cloned or which user runs it. Requires `.venv` and `config.env` to already
 be set up (see Setup, above). Safe to re-run. `--upgrade` refuses to run if
 there are uncommitted local changes, so it can't clobber in-progress edits.
+
+### Sleep and wake
+
+launchd's `StartInterval` timer doesn't fire while the Mac is asleep, and
+its wake catch-up isn't prompt — it can be several minutes after wake before
+a missed run fires. To close that gap, the installer also builds and loads
+a second, always-running LaunchAgent, `wake-watcher`
+(`swift/wake-watcher/`), which observes `NSWorkspace.didWakeNotification`
+and fires a sync ~10 seconds after every wake — a delay to give Wi-Fi a
+moment to reconnect first. It runs alongside the 15-minute timer rather
+than replacing it, has no external dependency (no Homebrew, no
+third-party app), and is uninstalled/reinstalled together with the main
+agent by `deploy/install.sh`.

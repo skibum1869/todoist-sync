@@ -11,11 +11,15 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.todoist-sync.local"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
+WAKE_LABEL="com.todoist-sync.wake-watcher.local"
+WAKE_PLIST_PATH="$HOME/Library/LaunchAgents/${WAKE_LABEL}.plist"
 
 if [ "${1:-}" = "--uninstall" ]; then
     launchctl unload "$PLIST_PATH" 2>/dev/null || true
     rm -f "$PLIST_PATH"
-    echo "Uninstalled: $LABEL"
+    launchctl unload "$WAKE_PLIST_PATH" 2>/dev/null || true
+    rm -f "$WAKE_PLIST_PATH"
+    echo "Uninstalled: $LABEL, $WAKE_LABEL"
     exit 0
 fi
 
@@ -61,6 +65,10 @@ echo "Building reminders-bridge (Swift/EventKit helper)..."
 (cd "$PROJECT_ROOT/swift/reminders-bridge" && swift build -c release)
 codesign -s - "$PROJECT_ROOT/swift/reminders-bridge/.build/release/reminders-bridge" 2>/dev/null || true
 
+echo "Building wake-watcher (Swift/NSWorkspace helper)..."
+(cd "$PROJECT_ROOT/swift/wake-watcher" && swift build -c release)
+codesign -s - "$PROJECT_ROOT/swift/wake-watcher/.build/release/wake-watcher" 2>/dev/null || true
+
 chmod +x "$PROJECT_ROOT/deploy/todoist-sync"
 codesign -s - "$PROJECT_ROOT/deploy/todoist-sync" 2>/dev/null || true
 
@@ -74,7 +82,20 @@ sed \
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
 launchctl load "$PLIST_PATH"
 
+# Wake trigger: StartInterval alone only catches up some time after the Mac
+# wakes, not immediately. wake-watcher is a small always-running LaunchAgent
+# that observes NSWorkspace.didWakeNotification and fires a sync ~10s after
+# wake, so pair it with the timer above rather than replacing it.
+sed \
+    -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
+    -e "s|__LABEL__|$WAKE_LABEL|g" \
+    "$PROJECT_ROOT/deploy/com.todoist-sync.wake-watcher.plist.template" > "$WAKE_PLIST_PATH"
+
+launchctl unload "$WAKE_PLIST_PATH" 2>/dev/null || true
+launchctl load "$WAKE_PLIST_PATH"
+
 echo "Installed and loaded: $LABEL (runs every 15 minutes)"
+echo "Installed and loaded: $WAKE_LABEL (syncs ~10s after wake from sleep)"
 echo "Logs: $PROJECT_ROOT/var/sync-out.log / var/sync-error.log"
 echo "To uninstall: ./deploy/install.sh --uninstall"
 echo

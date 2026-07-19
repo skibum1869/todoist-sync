@@ -5,4 +5,4 @@ config.env
 .DS_Store
 var/
 *.egg-info/
-swift/reminders-bridge/.build/
+**/.build/
