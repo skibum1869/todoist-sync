@@ -105,9 +105,12 @@ any edit (the installer does this automatically).
 
 ```bash
 ./deploy/install.sh              # build, sign, install, and load
+./deploy/install.sh --upgrade    # pull latest code, update deps, then build/sign/install/load
+./deploy/install.sh -U           # same as --upgrade
 ./deploy/install.sh --uninstall  # unload and remove
 ```
 
 Resolves paths automatically, so it works regardless of where the repo is
 cloned or which user runs it. Requires `.venv` and `config.env` to already
-be set up (see Setup, above). Safe to re-run.
+be set up (see Setup, above). Safe to re-run. `--upgrade` refuses to run if
+there are uncommitted local changes, so it can't clobber in-progress edits.

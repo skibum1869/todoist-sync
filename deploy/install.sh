@@ -1,9 +1,11 @@
 #!/bin/bash
-# Installs/uninstalls the todoist-sync LaunchAgent for the current user.
+# Installs/uninstalls/upgrades the todoist-sync LaunchAgent for the current user.
 # Safe to re-run — reinstalls/reloads if already installed.
 #
 # Usage:
 #   ./deploy/install.sh              install and load
+#   ./deploy/install.sh --upgrade    pull latest code, update deps, then install and load
+#   ./deploy/install.sh -U           same as --upgrade
 #   ./deploy/install.sh --uninstall  unload and remove
 set -euo pipefail
 
@@ -16,6 +18,20 @@ if [ "${1:-}" = "--uninstall" ]; then
     rm -f "$PLIST_PATH"
     echo "Uninstalled: $LABEL"
     exit 0
+fi
+
+UPGRADE=false
+if [ "${1:-}" = "--upgrade" ] || [ "${1:-}" = "-U" ]; then
+    UPGRADE=true
+fi
+
+if [ "$UPGRADE" = true ]; then
+    if [ -n "$(cd "$PROJECT_ROOT" && git status --porcelain)" ]; then
+        echo "error: uncommitted changes in $PROJECT_ROOT — commit or stash before upgrading." >&2
+        exit 1
+    fi
+    echo "Pulling latest code..."
+    (cd "$PROJECT_ROOT" && git pull)
 fi
 
 if [ ! -x "$PROJECT_ROOT/.venv/bin/python" ]; then
@@ -34,6 +50,12 @@ if ! command -v swift >/dev/null 2>&1; then
     echo "error: swift not found — install Xcode Command Line Tools first:" >&2
     echo "  xcode-select --install" >&2
     exit 1
+fi
+
+if [ "$UPGRADE" = true ]; then
+    echo "Updating Python dependencies..."
+    "$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt" --upgrade
+    "$PROJECT_ROOT/.venv/bin/pip" install -e "$PROJECT_ROOT" --no-deps
 fi
 
 echo "Building reminders-bridge (Swift/EventKit helper)..."
