@@ -7,25 +7,29 @@ import logging.handlers
 import subprocess
 import sys
 from datetime import datetime, time, timedelta
+from pathlib import Path
 
 import httpx
 
 from . import config, state
 from . import __version__
 from .config import (
+    AUTH_FAILURE_MARKER,
     CONFLICT_WINNER,
     LIST_NAME,
     LOCK_PATH,
     LOG_ERROR_PATH,
     LOG_OUT_PATH,
     NETWORK_DOWN_MARKER,
+    REMINDERS_ACCESS_MARKER,
     STATE_PATH,
     TODOIST_API_KEY,
 )
-from .reminders_bridge import RemindersBridge
+from .reminders_bridge import RemindersBridge, RemindersUnavailableError
 from .todoist_bridge import TodoistBridge
 
-_NETWORK_NOTIFY_THROTTLE = timedelta(hours=1)
+_NOTIFY_THROTTLE = timedelta(hours=1)
+_FAILURE_MARKERS = (NETWORK_DOWN_MARKER, AUTH_FAILURE_MARKER, REMINDERS_ACCESS_MARKER)
 
 _MAX_LOG_BYTES = 1_000_000  # 1 MB per file
 _LOG_BACKUP_COUNT = 3
@@ -81,22 +85,28 @@ def _notify_macos(title: str, message: str) -> None:
     subprocess.run(["osascript", "-e", script], check=False)
 
 
-def _notify_network_down() -> None:
+def _notify_once(marker: Path, title: str, message: str) -> None:
+    """Notifies via macOS banner, throttled per-marker to once per
+    _NOTIFY_THROTTLE so a persistent failure (offline for hours, an
+    expired token nobody's noticed yet) doesn't spam a banner every 15
+    minutes. The marker also records that this failure category is
+    currently active, so a subsequent success can clear it."""
     now = datetime.now()
     last = None
-    if NETWORK_DOWN_MARKER.exists():
+    if marker.exists():
         try:
-            last = datetime.fromisoformat(NETWORK_DOWN_MARKER.read_text().strip())
+            last = datetime.fromisoformat(marker.read_text().strip())
         except ValueError:
             last = None
-    if last is None or now - last > _NETWORK_NOTIFY_THROTTLE:
-        _notify_macos("Todoist Sync", "No internet connection — sync skipped.")
-    NETWORK_DOWN_MARKER.write_text(now.isoformat())
+    if last is None or now - last > _NOTIFY_THROTTLE:
+        _notify_macos(title, message)
+    marker.write_text(now.isoformat())
 
 
-def _clear_network_down_marker() -> None:
-    if NETWORK_DOWN_MARKER.exists():
-        NETWORK_DOWN_MARKER.unlink()
+def _clear_failure_markers() -> None:
+    for marker in _FAILURE_MARKERS:
+        if marker.exists():
+            marker.unlink()
 
 
 def _acquire_lock():
@@ -332,7 +342,7 @@ def main() -> None:
         pair["all_day"] = winning_all_day
 
     state.save_state(STATE_PATH, pairs)
-    _clear_network_down_marker()
+    _clear_failure_markers()
 
     log.info(
         "Sync complete: %d reminder(s) -> Todoist, %d task(s) -> Reminders, "
@@ -360,7 +370,24 @@ if __name__ == "__main__":
         # than a real sync bug, and surface it since this runs headless via
         # launchd with no other visible output.
         log.warning("Sync failed: no internet connection")
-        _notify_network_down()
+        _notify_once(NETWORK_DOWN_MARKER, "Todoist Sync", "No internet connection — sync skipped.")
+        sys.exit(1)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            # An expired/revoked token would otherwise retry silently
+            # forever, logged but never actually noticed.
+            log.warning("Sync failed: Todoist API token invalid or expired")
+            _notify_once(
+                AUTH_FAILURE_MARKER,
+                "Todoist Sync",
+                "Todoist API token invalid or expired — check config.env.",
+            )
+        else:
+            log.exception("Sync failed")
+        sys.exit(1)
+    except RemindersUnavailableError as e:
+        log.warning("Sync failed: %s", e)
+        _notify_once(REMINDERS_ACCESS_MARKER, "Todoist Sync", str(e))
         sys.exit(1)
     except Exception:
         log.exception("Sync failed")

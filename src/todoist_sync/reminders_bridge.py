@@ -15,15 +15,30 @@ _BINARY = (
 )
 
 
+class RemindersUnavailableError(RuntimeError):
+    """Raised when the Reminders bridge can't run at all: EventKit access
+    not granted, or the compiled helper binary is missing. Distinct from
+    RuntimeError so callers can offer a specific, actionable notice instead
+    of treating it as an unclassified sync failure."""
+
+
 def _run(*args: str) -> str:
     if not _BINARY.exists():
-        raise RuntimeError(
+        raise RemindersUnavailableError(
             f"{_BINARY} not found — build it first: "
             f"(cd swift/reminders-bridge && swift build -c release)"
         )
-    result = subprocess.run(
-        [str(_BINARY), *args], capture_output=True, text=True, check=True
-    )
+    try:
+        result = subprocess.run(
+            [str(_BINARY), *args], capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        if "Reminders access not granted" in (e.stderr or ""):
+            raise RemindersUnavailableError(
+                "Reminders access not granted — check System Settings > "
+                "Privacy & Security > Reminders."
+            ) from e
+        raise
     return result.stdout.strip()
 
 
