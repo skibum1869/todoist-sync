@@ -106,7 +106,6 @@ any edit (the installer does this automatically).
 ```bash
 ./deploy/install.sh              # build, sign, install, and load
 ./deploy/install.sh --upgrade    # pull latest code, update deps, then build/sign/install/load
-./deploy/install.sh -U           # same as --upgrade
 ./deploy/install.sh --uninstall  # unload and remove
 ```
 

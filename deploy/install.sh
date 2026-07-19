@@ -5,7 +5,6 @@
 # Usage:
 #   ./deploy/install.sh              install and load
 #   ./deploy/install.sh --upgrade    pull latest code, update deps, then install and load
-#   ./deploy/install.sh -U           same as --upgrade
 #   ./deploy/install.sh --uninstall  unload and remove
 set -euo pipefail
 
@@ -21,7 +20,7 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 UPGRADE=false
-if [ "${1:-}" = "--upgrade" ] || [ "${1:-}" = "-U" ]; then
+if [ "${1:-}" = "--upgrade" ]; then
     UPGRADE=true
 fi
 
