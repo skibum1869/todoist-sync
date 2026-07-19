@@ -72,23 +72,30 @@ it in System Settings > Privacy & Security > Automation.
 
 ## Scheduling
 
-Scheduled via a launchd LaunchAgent (`deploy/com.maxharris.todoist-sync.plist`)
-rather than cron, since AppleScript needs to run in the logged-in GUI
-session to control Reminders.app reliably. It runs every 15 minutes
-(`StartInterval`) and logs to `sync-out.log` / `sync-error.log` in the
-project root.
+Scheduled via a launchd LaunchAgent rather than cron, since AppleScript
+needs to run in the logged-in GUI session to control Reminders.app
+reliably. It runs every 15 minutes and logs to `sync-out.log` /
+`sync-error.log` in the project root.
 
-The plist points at `deploy/todoist-sync`, a small wrapper script, rather
+The agent points at `deploy/todoist-sync`, a small wrapper script, rather
 than the venv's Python binary directly — otherwise macOS's Login Items list
 shows the background item as "Python" instead of something recognizable.
+That script is ad-hoc code-signed (`codesign -s -`) to clear the
+"unidentified developer" warning macOS shows for unsigned executables
+registered as background items; that's a local-only signature, not tied to
+an Apple Developer ID, and needs re-running after any edit to the script.
+
+**New setup:**
 
 ```bash
-cp deploy/com.maxharris.todoist-sync.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.maxharris.todoist-sync.plist
-
-# to stop:
-launchctl unload ~/Library/LaunchAgents/com.maxharris.todoist-sync.plist
+./deploy/install.sh
 ```
+
+Resolves paths automatically, so it works regardless of where the repo is
+cloned or which user runs it. Requires `.venv` and `config.env` to already
+be set up (see Setup, above). Safe to re-run.
+
+To uninstall: `./deploy/install.sh --uninstall`
 
 ## Reminders.app AppleScript quirks
 
