@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import httpx
 from todoist_api_python.api import TodoistAPI
 
 
@@ -27,8 +28,10 @@ class TodoistBridge:
     def get_task(self, task_id: str):
         try:
             return self.api.get_task(task_id)
-        except Exception:
-            return None
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
 
     def create_task(
         self,
