@@ -30,8 +30,20 @@ if [ ! -f "$PROJECT_ROOT/config.env" ]; then
     exit 1
 fi
 
+if ! command -v swift >/dev/null 2>&1; then
+    echo "error: swift not found — install Xcode Command Line Tools first:" >&2
+    echo "  xcode-select --install" >&2
+    exit 1
+fi
+
+echo "Building reminders-bridge (Swift/EventKit helper)..."
+(cd "$PROJECT_ROOT/swift/reminders-bridge" && swift build -c release)
+codesign -s - "$PROJECT_ROOT/swift/reminders-bridge/.build/release/reminders-bridge" 2>/dev/null || true
+
 chmod +x "$PROJECT_ROOT/deploy/todoist-sync"
 codesign -s - "$PROJECT_ROOT/deploy/todoist-sync" 2>/dev/null || true
+
+mkdir -p "$PROJECT_ROOT/var"
 
 sed \
     -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
@@ -42,5 +54,8 @@ launchctl unload "$PLIST_PATH" 2>/dev/null || true
 launchctl load "$PLIST_PATH"
 
 echo "Installed and loaded: $LABEL (runs every 15 minutes)"
-echo "Logs: $PROJECT_ROOT/sync-out.log / sync-error.log"
+echo "Logs: $PROJECT_ROOT/var/sync-out.log / var/sync-error.log"
 echo "To uninstall: ./deploy/install.sh --uninstall"
+echo
+echo "Note: the first sync run will prompt macOS for Reminders access —"
+echo "approve it in System Settings > Privacy & Security > Reminders."

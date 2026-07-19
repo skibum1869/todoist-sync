@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 config.env
 .DS_Store
-sync-out.log
-sync-error.log
-.sync_state.json
+var/
 *.egg-info/
+swift/reminders-bridge/.build/

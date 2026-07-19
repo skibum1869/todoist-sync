@@ -10,7 +10,37 @@ from .config import LIST_NAME, STATE_PATH, TODOIST_API_KEY
 from .reminders_bridge import RemindersBridge
 from .todoist_bridge import TodoistBridge
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+class _MaxLevelFilter(logging.Filter):
+    """Excludes records at or above the given level, for the stdout handler
+    so routine logging doesn't get duplicated into the stderr/error log."""
+
+    def __init__(self, below_level: int):
+        super().__init__()
+        self.below_level = below_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno < self.below_level
+
+
+def _configure_logging() -> None:
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+
+    info_handler = logging.StreamHandler(sys.stdout)
+    info_handler.setLevel(logging.INFO)
+    info_handler.addFilter(_MaxLevelFilter(logging.ERROR))
+    info_handler.setFormatter(formatter)
+
+    error_handler = logging.StreamHandler(sys.stderr)
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(info_handler)
+    root.addHandler(error_handler)
+
+
+_configure_logging()
 log = logging.getLogger("sync_tasks")
 
 
