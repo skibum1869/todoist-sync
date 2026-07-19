@@ -7,6 +7,7 @@ import sys
 from datetime import datetime, time
 
 from . import state
+from . import __version__
 from .config import CONFLICT_WINNER, LIST_NAME, LOG_ERROR_PATH, LOG_OUT_PATH, STATE_PATH, TODOIST_API_KEY
 from .reminders_bridge import RemindersBridge
 from .todoist_bridge import TodoistBridge
@@ -110,6 +111,7 @@ def _reconcile_scalar(last_value, r_value, t_value, set_todoist, set_reminders):
 
 
 def main() -> None:
+    log.info("todoist-sync v%s starting", __version__)
     reminders = RemindersBridge(LIST_NAME)
     todoist = TodoistBridge(TODOIST_API_KEY)
     project_id = todoist.get_or_create_project(LIST_NAME)
