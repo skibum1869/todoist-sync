@@ -77,8 +77,14 @@ class RemindersBridge:
     def set_body(self, reminder_id: str, body: str) -> bool:
         return json.loads(_run("set-body", "--list", self.list_name, "--id", reminder_id, "--body", body))["ok"]
 
+    def set_name(self, reminder_id: str, name: str) -> bool:
+        return json.loads(_run("set-name", "--list", self.list_name, "--id", reminder_id, "--name", name))["ok"]
+
     def complete_reminder(self, reminder_id: str) -> bool:
         return json.loads(_run("complete", "--list", self.list_name, "--id", reminder_id))["ok"]
+
+    def uncomplete_reminder(self, reminder_id: str) -> bool:
+        return json.loads(_run("uncomplete", "--list", self.list_name, "--id", reminder_id))["ok"]
 
     def set_due_date(self, reminder_id: str, due_dt: datetime, all_day: bool) -> bool:
         args = ["set-due", "--list", self.list_name, "--id", reminder_id, "--due", _serialize_due(due_dt)]

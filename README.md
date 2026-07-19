@@ -21,11 +21,14 @@ turned out to clutter every synced item's notes field.
   1. Creates a linked Todoist task for any reminder in Siri Sync that isn't
      paired yet (and vice versa), copying over the title, notes/description,
      due date, and completion status.
-  2. For every already-linked pair, reconciles completion status and due
-     date in both directions — comparing each side's current value against
-     what was last synced (recorded on the pair), not against volatile
-     "last modified" timestamps, so the script's own writes can't make a
-     stale value look "newer" and win on the next run.
+  2. For every already-linked pair, reconciles title, notes, completion
+     status, and due date in both directions — comparing each side's
+     current value against what was last synced (recorded on the pair),
+     not against volatile "last modified" timestamps, so the script's own
+     writes can't make a stale value look "newer" and win on the next run.
+     If both sides changed a field to different values between two syncs,
+     `SYNC_CONFLICT_WINNER` in `config.env` (`reminders` by default, or
+     `todoist`) decides which one sticks.
 - The Reminders side talks to EventKit through a small compiled Swift
   helper (`swift/reminders-bridge`), not AppleScript. AppleScript's
   Reminders support proved unreliable under testing — direct-by-name and
@@ -36,21 +39,23 @@ turned out to clutter every synced item's notes field.
 
 ## Known limitations
 
-- **Un-completing doesn't propagate.** Completion only flows
-  incomplete → complete, never back. If you complete something in Reminders,
-  then delete it via "clean up completed" before the next sync runs, the
-  completion is lost and the Todoist task stays open (there's no window
-  where the deleted reminder can be read as "completed" — see the code
-  comment in `sync_tasks.py` for the underlying race).
-- **Genuine due-date conflicts favor Reminders.** If a due date is changed
-  differently on both sides between two syncs, Reminders' value wins.
+- **A completion can be lost if you "clean up" too fast.** If you complete
+  something in Reminders and then delete it via "clean up completed"
+  *before* the next sync runs, the completion is lost — once the reminder
+  is gone there's no window left where it can be read as "completed," so
+  the Todoist task stays open. This is inherent to polling-based sync
+  (nothing watches for changes in real time) and isn't fixable without a
+  different architecture. Un-completing itself (without deleting) does
+  propagate correctly in either direction.
 - **No true recurrence.** Todoist's API only exposes recurrence as a
   human-readable string (e.g. "Every! 1 weeks Saturday"), not a structured
-  rule, so there's nothing reliable to translate into an actual EventKit
-  recurrence rule — only the next due date keeps getting updated to match,
-  each time the sync runs.
-- **Titles/notes aren't re-synced after creation.** Only the initial copy
-  at creation time; editing a title later doesn't propagate.
+  rule — confirmed against the official API reference, which documents no
+  RRULE/frequency/interval fields anywhere. Todoist's own completion-based
+  `every!` recurrence also has no EventKit equivalent at all (EventKit
+  recurrence is always fixed-schedule, never "N units after actual
+  completion"). Only the next due date keeps getting updated to match,
+  each time the sync runs — there's no attempt to translate recurrence
+  into a real EventKit recurrence rule.
 
 ## Layout
 

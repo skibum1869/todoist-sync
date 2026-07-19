@@ -16,6 +16,12 @@ if ENV_PATH.exists():
 TODOIST_API_KEY = os.environ["TODOIST_API_KEY"]
 LIST_NAME = os.environ.get("SYNC_LIST_NAME", "Siri Sync")
 
+CONFLICT_WINNER = os.environ.get("SYNC_CONFLICT_WINNER", "reminders").strip().lower()
+if CONFLICT_WINNER not in ("reminders", "todoist"):
+    raise ValueError(
+        f"SYNC_CONFLICT_WINNER must be 'reminders' or 'todoist', got {CONFLICT_WINNER!r}"
+    )
+
 VAR_DIR = PROJECT_ROOT / "var"
 VAR_DIR.mkdir(exist_ok=True)
 VAR_DIR.chmod(0o700)

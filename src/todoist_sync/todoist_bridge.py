@@ -51,5 +51,14 @@ class TodoistBridge:
         else:
             self.api.update_task(task_id, due_datetime=due_dt)
 
+    def set_task_content(self, task_id: str, content: str) -> None:
+        self.api.update_task(task_id, content=content)
+
+    def set_task_description(self, task_id: str, description: str) -> None:
+        self.api.update_task(task_id, description=description)
+
     def complete_task(self, task_id: str) -> None:
         self.api.complete_task(task_id)
+
+    def uncomplete_task(self, task_id: str) -> None:
+        self.api.uncomplete_task(task_id)

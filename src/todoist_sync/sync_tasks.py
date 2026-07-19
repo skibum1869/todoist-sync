@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, time
 
 from . import state
-from .config import LIST_NAME, LOG_ERROR_PATH, LOG_OUT_PATH, STATE_PATH, TODOIST_API_KEY
+from .config import CONFLICT_WINNER, LIST_NAME, LOG_ERROR_PATH, LOG_OUT_PATH, STATE_PATH, TODOIST_API_KEY
 from .reminders_bridge import RemindersBridge
 from .todoist_bridge import TodoistBridge
 
@@ -84,6 +84,31 @@ def _deserialize_due(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def _reconcile_scalar(last_value, r_value, t_value, set_todoist, set_reminders):
+    """3-way merge for a simple equality-comparable field: propagate
+    whichever side changed since last_value, or resolve a genuine conflict
+    (both changed, to different values) per CONFLICT_WINNER. Returns
+    (new_value, changed)."""
+    r_changed = r_value != last_value
+    t_changed = t_value != last_value
+
+    if not r_changed and not t_changed:
+        return last_value, False
+
+    if r_changed and t_changed and r_value != t_value:
+        winner = r_value if CONFLICT_WINNER == "reminders" else t_value
+    elif r_changed:
+        winner = r_value
+    else:
+        winner = t_value
+
+    if winner != t_value:
+        set_todoist(winner)
+    if winner != r_value:
+        set_reminders(winner)
+    return winner, True
+
+
 def main() -> None:
     reminders = RemindersBridge(LIST_NAME)
     todoist = TodoistBridge(TODOIST_API_KEY)
@@ -95,8 +120,8 @@ def main() -> None:
 
     # 1. Propagate brand-new items sitting in the dedicated containers,
     #    including whatever due date/time each one already has. The pair's
-    #    "due"/"all_day" fields record what we just synced, so reconciliation
-    #    below has a correct baseline from the start.
+    #    fields record what we just synced, so reconciliation below has a
+    #    correct baseline from the start.
     created_in_todoist = 0
     for r in reminders.get_reminders():
         if r["id"] in linked_reminder_ids:
@@ -110,6 +135,9 @@ def main() -> None:
                 "task_id": task_id,
                 "due": _serialize_due(r["due"]),
                 "all_day": r["all_day"],
+                "completed": r["completed"],
+                "name": r["name"],
+                "body": r["body"],
             }
         )
         linked_task_ids.add(task_id)
@@ -120,13 +148,17 @@ def main() -> None:
         if t.id in linked_task_ids:
             continue
         due_dt, all_day = _due_to_datetime(t.due)
-        reminder_id = reminders.create_reminder(t.content, t.description or "", due_dt, all_day)
+        body = t.description or ""
+        reminder_id = reminders.create_reminder(t.content, body, due_dt, all_day)
         pairs.append(
             {
                 "reminder_id": reminder_id,
                 "task_id": t.id,
                 "due": _serialize_due(due_dt),
                 "all_day": all_day,
+                "completed": False,
+                "name": t.content,
+                "body": body,
             }
         )
         linked_reminder_ids.add(reminder_id)
@@ -135,26 +167,57 @@ def main() -> None:
     # 2. Reconcile already-linked pairs by id directly. Reminder lookups are
     #    scoped to LIST_NAME on the Swift side (not just addressed by global
     #    id) so a tampered or stale state.json entry can't read/mutate a
-    #    reminder outside the intended list. Due-date conflicts are resolved
-    #    against the last-synced value recorded on the pair (not wall-clock
-    #    "last modified" timestamps) — otherwise our own writes to one side
-    #    make that side look "newer" on the next run and its value keeps
-    #    winning even when it's the stale one.
+    #    reminder outside the intended list. Every field is resolved against
+    #    the last-synced value recorded on the pair (not wall-clock "last
+    #    modified" timestamps) — otherwise our own writes to one side make
+    #    that side look "newer" on the next run and its value keeps winning
+    #    even when it's the stale one. Genuine conflicts (both sides changed
+    #    to different values since the last sync) resolve per
+    #    CONFLICT_WINNER.
     completed_synced = 0
     due_synced = 0
+    name_synced = 0
+    notes_synced = 0
     for pair in pairs:
         r = reminders.get_reminder(pair["reminder_id"])
         t = todoist.get_task(pair["task_id"])
         if r is None or t is None:
             continue
 
-        todoist_done = t.completed_at is not None
-        if r["completed"] and not todoist_done:
-            todoist.complete_task(t.id)
+        new_completed, completed_changed = _reconcile_scalar(
+            pair.get("completed", False),
+            r["completed"],
+            t.completed_at is not None,
+            set_todoist=lambda v: (todoist.complete_task(t.id) if v else todoist.uncomplete_task(t.id)),
+            set_reminders=lambda v: (
+                reminders.complete_reminder(r["id"]) if v else reminders.uncomplete_reminder(r["id"])
+            ),
+        )
+        pair["completed"] = new_completed
+        if completed_changed:
             completed_synced += 1
-        elif todoist_done and not r["completed"]:
-            reminders.complete_reminder(r["id"])
-            completed_synced += 1
+
+        new_name, name_changed = _reconcile_scalar(
+            pair.get("name", r["name"]),
+            r["name"],
+            t.content,
+            set_todoist=lambda v: todoist.set_task_content(t.id, v),
+            set_reminders=lambda v: reminders.set_name(r["id"], v),
+        )
+        pair["name"] = new_name
+        if name_changed:
+            name_synced += 1
+
+        new_body, body_changed = _reconcile_scalar(
+            pair.get("body", r["body"]),
+            r["body"],
+            t.description or "",
+            set_todoist=lambda v: todoist.set_task_description(t.id, v),
+            set_reminders=lambda v: reminders.set_body(r["id"], v),
+        )
+        pair["body"] = new_body
+        if body_changed:
+            notes_synced += 1
 
         last_due = _deserialize_due(pair.get("due"))
         last_all_day = pair.get("all_day", False)
@@ -166,11 +229,17 @@ def main() -> None:
 
         if r_changed and t_changed and not _due_equal(r_due, r_all_day, t_due, t_all_day):
             # Both sides changed to different values since the last sync —
-            # genuine conflict. Reminders wins (simple, deterministic).
-            winning_due, winning_all_day = r_due, r_all_day
-            if r_due is not None:
-                todoist.set_task_due(t.id, r_due, r_all_day)
-                due_synced += 1
+            # genuine conflict, resolved per CONFLICT_WINNER.
+            if CONFLICT_WINNER == "todoist":
+                winning_due, winning_all_day = t_due, t_all_day
+                if t_due is not None:
+                    reminders.set_due_date(r["id"], t_due, t_all_day)
+                    due_synced += 1
+            else:
+                winning_due, winning_all_day = r_due, r_all_day
+                if r_due is not None:
+                    todoist.set_task_due(t.id, r_due, r_all_day)
+                    due_synced += 1
         elif r_changed and r_due is not None:
             todoist.set_task_due(t.id, r_due, r_all_day)
             due_synced += 1
@@ -189,11 +258,14 @@ def main() -> None:
 
     log.info(
         "Sync complete: %d reminder(s) -> Todoist, %d task(s) -> Reminders, "
-        "%d completion(s) synced, %d due date(s) synced",
+        "%d completion(s) synced, %d due date(s) synced, %d title(s) synced, "
+        "%d note(s) synced",
         created_in_todoist,
         created_in_reminders,
         completed_synced,
         due_synced,
+        name_synced,
+        notes_synced,
     )
 
 

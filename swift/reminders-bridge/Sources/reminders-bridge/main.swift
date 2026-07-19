@@ -220,6 +220,22 @@ case "set-body":
         printJSON(["ok": false])
     }
 
+case "set-name":
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName)
+    else {
+        printJSON(["ok": false])
+        break
+    }
+    item.title = opt(rest, "name") ?? ""
+    do {
+        try store.save(item, commit: true)
+        printJSON(["ok": true])
+    } catch {
+        eprint("save failed: \(error)")
+        printJSON(["ok": false])
+    }
+
 case "complete":
     guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
           let item = findReminder(id: id, inList: listName)
@@ -228,6 +244,22 @@ case "complete":
         break
     }
     item.isCompleted = true
+    do {
+        try store.save(item, commit: true)
+        printJSON(["ok": true])
+    } catch {
+        eprint("save failed: \(error)")
+        printJSON(["ok": false])
+    }
+
+case "uncomplete":
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName)
+    else {
+        printJSON(["ok": false])
+        break
+    }
+    item.isCompleted = false
     do {
         try store.save(item, commit: true)
         printJSON(["ok": true])
