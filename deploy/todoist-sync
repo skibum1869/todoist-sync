@@ -1,0 +1,2 @@
+#!/bin/bash
+exec "/Users/maxharris/Code/personal/todoist-sync/.venv/bin/python" -m todoist_sync.sync_tasks
