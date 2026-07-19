@@ -9,7 +9,6 @@ description = "Two-way sync between Apple Reminders and Todoist"
 requires-python = ">=3.10"
 dependencies = [
     "todoist-api-python==4.0.0",
-    "py-applescript==1.0.3",
     "python-dotenv==1.2.2",
 ]
 

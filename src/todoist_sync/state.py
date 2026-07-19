@@ -12,3 +12,4 @@ def load_state(path: Path) -> list[dict]:
 
 def save_state(path: Path, pairs: list[dict]) -> None:
     path.write_text(json.dumps(pairs, indent=2))
+    path.chmod(0o600)

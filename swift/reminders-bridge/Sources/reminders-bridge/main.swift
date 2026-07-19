@@ -42,6 +42,18 @@ func findCalendar(named name: String, createIfMissing: Bool) -> EKCalendar? {
     }
 }
 
+// Looks up a reminder by id, scoped to a specific list. Reminder ids are
+// otherwise globally addressable via calendarItem(withIdentifier:), which
+// would let a caller read/mutate any reminder anywhere if it ever received
+// an id from outside the intended list (e.g. a tampered or stale state
+// file) — this keeps every id-based operation confined to the list it's
+// supposed to operate on.
+func findReminder(id: String, inList listName: String) -> EKReminder? {
+    guard let item = store.calendarItem(withIdentifier: id) as? EKReminder else { return nil }
+    guard item.calendar.title == listName else { return nil }
+    return item
+}
+
 func fetchReminders(in calendar: EKCalendar) -> [EKReminder] {
     let predicate = store.predicateForReminders(in: [calendar])
     let sem = DispatchSemaphore(value: 0)
@@ -164,7 +176,9 @@ case "get-reminders":
     printJSON(fetchReminders(in: cal).map(toJSON))
 
 case "get-reminder":
-    guard let id = opt(rest, "id"), let item = store.calendarItem(withIdentifier: id) as? EKReminder else {
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName)
+    else {
         print("null")
         break
     }
@@ -191,7 +205,9 @@ case "create-reminder":
     }
 
 case "set-body":
-    guard let id = opt(rest, "id"), let item = store.calendarItem(withIdentifier: id) as? EKReminder else {
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName)
+    else {
         printJSON(["ok": false])
         break
     }
@@ -205,7 +221,9 @@ case "set-body":
     }
 
 case "complete":
-    guard let id = opt(rest, "id"), let item = store.calendarItem(withIdentifier: id) as? EKReminder else {
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName)
+    else {
         printJSON(["ok": false])
         break
     }
@@ -219,7 +237,8 @@ case "complete":
     }
 
 case "set-due":
-    guard let id = opt(rest, "id"), let item = store.calendarItem(withIdentifier: id) as? EKReminder,
+    guard let listName = opt(rest, "list"), let id = opt(rest, "id"),
+          let item = findReminder(id: id, inList: listName),
           let dueStr = opt(rest, "due"), let comps = dueDateComponents(fromWire: dueStr, allDay: flag(rest, "all-day"))
     else {
         printJSON(["ok": false])

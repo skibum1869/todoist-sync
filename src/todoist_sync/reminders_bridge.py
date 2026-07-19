@@ -62,7 +62,7 @@ class RemindersBridge:
         return [_row_to_reminder(row) for row in rows]
 
     def get_reminder(self, reminder_id: str) -> dict | None:
-        row = json.loads(_run("get-reminder", "--id", reminder_id))
+        row = json.loads(_run("get-reminder", "--list", self.list_name, "--id", reminder_id))
         return _row_to_reminder(row) if row else None
 
     def create_reminder(self, name: str, body: str, due_dt: datetime | None = None, all_day: bool = False) -> str:
@@ -75,13 +75,13 @@ class RemindersBridge:
         return json.loads(_run(*args))["id"]
 
     def set_body(self, reminder_id: str, body: str) -> bool:
-        return json.loads(_run("set-body", "--id", reminder_id, "--body", body))["ok"]
+        return json.loads(_run("set-body", "--list", self.list_name, "--id", reminder_id, "--body", body))["ok"]
 
     def complete_reminder(self, reminder_id: str) -> bool:
-        return json.loads(_run("complete", "--id", reminder_id))["ok"]
+        return json.loads(_run("complete", "--list", self.list_name, "--id", reminder_id))["ok"]
 
     def set_due_date(self, reminder_id: str, due_dt: datetime, all_day: bool) -> bool:
-        args = ["set-due", "--id", reminder_id, "--due", _serialize_due(due_dt)]
+        args = ["set-due", "--list", self.list_name, "--id", reminder_id, "--due", _serialize_due(due_dt)]
         if all_day:
             args.append("--all-day")
         return json.loads(_run(*args))["ok"]

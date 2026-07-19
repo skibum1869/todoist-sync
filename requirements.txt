@@ -6,10 +6,5 @@ h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
 idna==3.18
-py-applescript==1.0.3
-pyobjc-core==12.2.1
-pyobjc-framework-AppleScriptKit==12.2.1
-pyobjc-framework-AppleScriptObjC==12.2.1
-pyobjc-framework-Cocoa==12.2.1
 python-dotenv==1.2.2
 todoist_api_python==4.0.0

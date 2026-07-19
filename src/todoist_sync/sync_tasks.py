@@ -120,8 +120,10 @@ def main() -> None:
         linked_reminder_ids.add(reminder_id)
         created_in_reminders += 1
 
-    # 2. Reconcile already-linked pairs by id directly, regardless of which
-    #    list/project they currently live in. Due-date conflicts are resolved
+    # 2. Reconcile already-linked pairs by id directly. Reminder lookups are
+    #    scoped to LIST_NAME on the Swift side (not just addressed by global
+    #    id) so a tampered or stale state.json entry can't read/mutate a
+    #    reminder outside the intended list. Due-date conflicts are resolved
     #    against the last-synced value recorded on the pair (not wall-clock
     #    "last modified" timestamps) — otherwise our own writes to one side
     #    make that side look "newer" on the next run and its value keeps
