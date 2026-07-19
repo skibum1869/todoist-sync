@@ -8,9 +8,11 @@ turned out to clutter every synced item's notes field.
 
 ## How it works
 
-- Both sides get a dedicated container named **Siri Sync** (a Reminders list
-  and a Todoist project), created automatically on first run. Only items in
-  these containers are ever touched.
+- Both sides get a dedicated container named **Siri Sync** by default (a
+  Reminders list and a Todoist project), created automatically on first
+  run. Only items in these containers are ever touched. The name is set by
+  `SYNC_LIST_NAME` in `config.env` — change it there if you want something
+  else; the rest of this doc just uses the default.
 - Pairings are tracked in a local state file (`var/state.json`), mapping
   each reminder's native id directly to its Todoist task id. Nothing is
   written into notes/descriptions to identify a pairing — those fields stay
