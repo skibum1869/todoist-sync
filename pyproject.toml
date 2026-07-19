@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "todoist-sync"
 dynamic = ["version"]
 description = "Two-way sync between Apple Reminders and Todoist"
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
     "todoist-api-python==4.0.0",
