@@ -184,18 +184,26 @@ def main() -> None:
         if r is None or t is None:
             continue
 
-        new_completed, completed_changed = _reconcile_scalar(
-            pair.get("completed", False),
-            r["completed"],
-            t.completed_at is not None,
-            set_todoist=lambda v: (todoist.complete_task(t.id) if v else todoist.uncomplete_task(t.id)),
-            set_reminders=lambda v: (
-                reminders.complete_reminder(r["id"]) if v else reminders.uncomplete_reminder(r["id"])
-            ),
-        )
-        pair["completed"] = new_completed
-        if completed_changed:
-            completed_synced += 1
+        # Recurring Todoist tasks never actually get completed_at set —
+        # "completing" one just advances its due date to the next
+        # occurrence and leaves it structurally incomplete. Treating that
+        # as a real completion signal would record a bogus "completed"
+        # baseline that the next run reads as Todoist having reverted,
+        # silently un-completing the reminder. Due-date reconciliation
+        # below is what actually represents progress on these.
+        if t.due is None or not t.due.is_recurring:
+            new_completed, completed_changed = _reconcile_scalar(
+                pair.get("completed", False),
+                r["completed"],
+                t.completed_at is not None,
+                set_todoist=lambda v: (todoist.complete_task(t.id) if v else todoist.uncomplete_task(t.id)),
+                set_reminders=lambda v: (
+                    reminders.complete_reminder(r["id"]) if v else reminders.uncomplete_reminder(r["id"])
+                ),
+            )
+            pair["completed"] = new_completed
+            if completed_changed:
+                completed_synced += 1
 
         new_name, name_changed = _reconcile_scalar(
             pair.get("name", r["name"]),

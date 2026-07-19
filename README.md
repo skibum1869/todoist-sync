@@ -56,6 +56,17 @@ turned out to clutter every synced item's notes field.
   completion"). Only the next due date keeps getting updated to match,
   each time the sync runs — there's no attempt to translate recurrence
   into a real EventKit recurrence rule.
+- **Completion status isn't synced for recurring Todoist tasks, on
+  purpose.** Verified directly: completing a recurring Todoist task never
+  sets `completed_at` at all — it just advances `due` to the next
+  occurrence and stays active forever. Reconciling "completed" for these
+  would record a bogus baseline (since Todoist's side can never actually
+  become "completed") that flips back and silently un-completes the
+  reminder on the next run. So completion sync is skipped entirely for
+  any pair whose Todoist task is recurring; the due-date advancing each
+  cycle is what represents progress on those instead. Completing the
+  reminder side of a recurring pair just marks the reminder done locally
+  — it won't push anything to Todoist.
 
 ## Layout
 
