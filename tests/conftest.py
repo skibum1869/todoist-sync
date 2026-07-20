@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -7,6 +8,15 @@ import pytest
 
 from todoist_sync import state as state_module
 from todoist_sync import sync_tasks
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_real_log_files():
+    # sync_tasks._configure_logging() attaches real RotatingFileHandlers to
+    # the root logger at import time (not inside main()), pointed at the
+    # actual var/sync-out.log / var/sync-error.log. Without this, every
+    # test that calls main() would append real log lines to those files.
+    logging.getLogger().handlers.clear()
 
 
 @dataclass
