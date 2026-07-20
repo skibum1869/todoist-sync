@@ -22,3 +22,12 @@ no observable difference) don't need a `VERSION` bump.
 When a `VERSION` bump lands, tag the commit (`git tag vX.Y.Z`) and cut a
 GitHub release from it so the log-visible version always resolves back to a
 concrete, inspectable set of changes.
+
+# Secrets
+
+`config.env` holds a live `TODOIST_API_KEY` and is gitignored on purpose —
+never commit it. Beyond git, never print or `cat` `config.env` in full
+either (terminal output, logs, tool calls, screen shares all count as
+exposure just as much as a commit does). To inspect its non-secret
+settings, use `grep -v TODOIST_API_KEY config.env` or read it and redact
+the key's value before displaying it.
