@@ -79,6 +79,13 @@ turned out to clutter every synced item's notes field.
   cycle is what represents progress on those instead. Completing the
   reminder side of a recurring pair just marks the reminder done locally
   — it won't push anything to Todoist.
+- **Location-based reminders aren't supported.** The Swift bridge only
+  ever reads/writes `EKReminder.dueDateComponents` — it has no handling
+  of `EKAlarm`/`structuredLocation` at all, and the Todoist task API this
+  tool uses has no location field to put it in either way. A
+  "remind me when I arrive/leave" reminder still syncs over as a plain
+  task (title and notes carry across), but the location trigger itself is
+  silently dropped.
 
 ## Layout
 
