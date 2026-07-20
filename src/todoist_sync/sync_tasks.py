@@ -14,6 +14,7 @@ import httpx
 from . import config, state
 from . import __version__
 from .config import (
+    ARCHIVE_AFTER_DAYS,
     AUTH_FAILURE_MARKER,
     CONFLICT_WINNER,
     LIST_NAME,
@@ -21,6 +22,7 @@ from .config import (
     LOG_ERROR_PATH,
     LOG_OUT_PATH,
     NETWORK_DOWN_MARKER,
+    PRUNE_MISSING_AFTER_CHECKS,
     REMINDERS_ACCESS_MARKER,
     STATE_PATH,
     TODOIST_API_KEY,
@@ -186,17 +188,42 @@ def main() -> None:
     todoist = TodoistBridge(TODOIST_API_KEY)
     project_id = todoist.get_or_create_project(LIST_NAME)
 
-    pairs = state.load_state(STATE_PATH)
+    pairs, archive = state.load_state(STATE_PATH)
     linked_reminder_ids = {p["reminder_id"] for p in pairs}
     linked_task_ids = {p["task_id"] for p in pairs}
+    # Archived pairs (completed on both sides for SYNC_ARCHIVE_AFTER_DAYS)
+    # are excluded from the per-pair reconciliation loop below, but their
+    # ids are kept here so a reminder/task that gets reactivated is matched
+    # back to its existing pair instead of spawning a duplicate.
+    archived_by_reminder = {p["reminder_id"]: p for p in archive}
+    archived_by_task = {p["task_id"]: p for p in archive}
+
+    def _unarchive(pair: dict) -> None:
+        archive.remove(pair)
+        del archived_by_reminder[pair["reminder_id"]]
+        del archived_by_task[pair["task_id"]]
+        pairs.append(pair)
+        linked_reminder_ids.add(pair["reminder_id"])
+        linked_task_ids.add(pair["task_id"])
 
     # 1. Propagate brand-new items sitting in the dedicated containers,
     #    including whatever due date/time each one already has. The pair's
     #    fields record what we just synced, so reconciliation below has a
     #    correct baseline from the start.
     created_in_todoist = 0
+    reactivated = 0
     for r in reminders.get_reminders():
         if r["id"] in linked_reminder_ids:
+            continue
+        archived_pair = archived_by_reminder.get(r["id"])
+        if archived_pair is not None:
+            # get_reminders() returns every reminder regardless of
+            # completion, so an archived id showing up here isn't
+            # necessarily a reactivation — only act if it's been unchecked.
+            if not r["completed"]:
+                _unarchive(archived_pair)
+                reactivated += 1
+                state.save_state(STATE_PATH, pairs, archive)
             continue
         task_id = todoist.create_task(project_id, r["name"], r["body"], r["due"], r["all_day"])
         if r["completed"]:
@@ -218,11 +245,20 @@ def main() -> None:
         # later item in this loop fails (e.g. connectivity drops mid-run),
         # an un-persisted pair here would make this reminder look unlinked
         # again next run and get a duplicate task created for it.
-        state.save_state(STATE_PATH, pairs)
+        state.save_state(STATE_PATH, pairs, archive)
 
     created_in_reminders = 0
     for t in todoist.get_active_tasks(project_id):
         if t.id in linked_task_ids:
+            continue
+        archived_pair = archived_by_task.get(t.id)
+        if archived_pair is not None:
+            # get_active_tasks() only ever returns open tasks, so a match
+            # here is always a genuine reactivation — no completed check
+            # needed, unlike the reminders side above.
+            _unarchive(archived_pair)
+            reactivated += 1
+            state.save_state(STATE_PATH, pairs, archive)
             continue
         due_dt, all_day = _due_to_datetime(t.due)
         body = t.description or ""
@@ -241,7 +277,7 @@ def main() -> None:
         linked_reminder_ids.add(reminder_id)
         created_in_reminders += 1
         # Same rationale as above: create_reminder() is not idempotent.
-        state.save_state(STATE_PATH, pairs)
+        state.save_state(STATE_PATH, pairs, archive)
 
     # 2. Reconcile already-linked pairs by id directly. Reminder lookups are
     #    scoped to LIST_NAME on the Swift side (not just addressed by global
@@ -257,11 +293,31 @@ def main() -> None:
     due_synced = 0
     name_synced = 0
     notes_synced = 0
+    now = datetime.now()
+    to_archive = []
+    to_prune = []
     for pair in pairs:
         r = reminders.get_reminder(pair["reminder_id"])
         t = todoist.get_task(pair["task_id"])
         if r is None or t is None:
+            # get_reminder/get_task only return None on a confirmed 404, not
+            # on a transient error (those raise instead) — so this is a real
+            # deletion signal, not a flaky one. Still require a few
+            # consecutive misses rather than pruning on the first sighting,
+            # in case the other side is mid-edit (e.g. an EventKit/iCloud
+            # propagation lag) rather than genuinely gone. A check count
+            # (not elapsed time) is what actually matters here — it demands
+            # that many independent confirmations regardless of how much
+            # wall-clock time passed between them (e.g. the Mac sleeping).
+            # Once confirmed gone, prune outright rather than archive:
+            # unlike a completed pair, a deleted one has no id worth
+            # matching a reactivation against.
+            pair["missing_checks"] = pair.get("missing_checks", 0) + 1
+            if pair["missing_checks"] >= PRUNE_MISSING_AFTER_CHECKS:
+                to_prune.append(pair)
             continue
+        if pair.get("missing_checks"):
+            pair["missing_checks"] = 0
 
         # Recurring Todoist tasks never actually get completed_at set —
         # "completing" one just advances its due date to the next
@@ -269,8 +325,11 @@ def main() -> None:
         # as a real completion signal would record a bogus "completed"
         # baseline that the next run reads as Todoist having reverted,
         # silently un-completing the reminder. Due-date reconciliation
-        # below is what actually represents progress on these.
-        if t.due is None or not t.due.is_recurring:
+        # below is what actually represents progress on these. They're
+        # also never eligible for archiving, since they never reach a
+        # real "done" state.
+        is_recurring = t.due is not None and t.due.is_recurring
+        if not is_recurring:
             new_completed, completed_changed = _reconcile_scalar(
                 pair.get("completed", False),
                 r["completed"],
@@ -283,6 +342,15 @@ def main() -> None:
             pair["completed"] = new_completed
             if completed_changed:
                 completed_synced += 1
+            # completed_at anchors the SYNC_ARCHIVE_AFTER_DAYS grace period.
+            # Stamp it on every fresh transition to completed, and backfill
+            # it for pairs that were already completed before this field
+            # existed, so they don't sit un-archived forever.
+            if new_completed:
+                if completed_changed or not pair.get("completed_at"):
+                    pair["completed_at"] = now.isoformat()
+            else:
+                pair["completed_at"] = None
 
         new_name, name_changed = _reconcile_scalar(
             pair.get("name", r["name"]),
@@ -341,19 +409,45 @@ def main() -> None:
         pair["due"] = _serialize_due(winning_due)
         pair["all_day"] = winning_all_day
 
-    state.save_state(STATE_PATH, pairs)
+        if (
+            not is_recurring
+            and pair.get("completed")
+            and pair.get("completed_at")
+            and now - datetime.fromisoformat(pair["completed_at"]) >= timedelta(days=ARCHIVE_AFTER_DAYS)
+        ):
+            to_archive.append(pair)
+
+    # 3. Move pairs that have sat completed on both sides past the grace
+    #    period into the archive. Archived pairs are excluded from the
+    #    per-pair API reconciliation above on future runs — the ids are
+    #    kept only so a later reactivation (see step 1) is recognized
+    #    instead of spawning a duplicate.
+    for pair in to_archive:
+        pairs.remove(pair)
+        archive.append(pair)
+
+    # 4. Drop pairs whose reminder and/or task has been confirmed gone for
+    #    longer than SYNC_PRUNE_MISSING_AFTER_DAYS. These are removed
+    #    outright, not archived — there's nothing left to reactivate.
+    for pair in to_prune:
+        pairs.remove(pair)
+
+    state.save_state(STATE_PATH, pairs, archive)
     _clear_failure_markers()
 
     log.info(
         "Sync complete: %d reminder(s) -> Todoist, %d task(s) -> Reminders, "
         "%d completion(s) synced, %d due date(s) synced, %d title(s) synced, "
-        "%d note(s) synced",
+        "%d note(s) synced, %d reactivated from archive, %d archived, %d pruned",
         created_in_todoist,
         created_in_reminders,
         completed_synced,
         due_synced,
         name_synced,
         notes_synced,
+        reactivated,
+        len(to_archive),
+        len(to_prune),
     )
 
 

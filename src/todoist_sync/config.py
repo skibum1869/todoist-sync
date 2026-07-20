@@ -34,6 +34,18 @@ LOCK_PATH = VAR_DIR / "sync.lock"
 TODOIST_API_KEY = os.environ.get("TODOIST_API_KEY")
 CONFLICT_WINNER = os.environ.get("SYNC_CONFLICT_WINNER", "reminders").strip().lower()
 
+_ARCHIVE_AFTER_DAYS_RAW = os.environ.get("SYNC_ARCHIVE_AFTER_DAYS", "180")
+try:
+    ARCHIVE_AFTER_DAYS = int(_ARCHIVE_AFTER_DAYS_RAW)
+except ValueError:
+    ARCHIVE_AFTER_DAYS = None
+
+_PRUNE_MISSING_AFTER_CHECKS_RAW = os.environ.get("SYNC_PRUNE_MISSING_AFTER_CHECKS", "4")
+try:
+    PRUNE_MISSING_AFTER_CHECKS = int(_PRUNE_MISSING_AFTER_CHECKS_RAW)
+except ValueError:
+    PRUNE_MISSING_AFTER_CHECKS = None
+
 
 def validate() -> None:
     if not TODOIST_API_KEY:
@@ -41,4 +53,13 @@ def validate() -> None:
     if CONFLICT_WINNER not in ("reminders", "todoist"):
         raise ValueError(
             f"SYNC_CONFLICT_WINNER must be 'reminders' or 'todoist', got {CONFLICT_WINNER!r}"
+        )
+    if ARCHIVE_AFTER_DAYS is None or ARCHIVE_AFTER_DAYS <= 0:
+        raise ValueError(
+            f"SYNC_ARCHIVE_AFTER_DAYS must be a positive integer, got {_ARCHIVE_AFTER_DAYS_RAW!r}"
+        )
+    if PRUNE_MISSING_AFTER_CHECKS is None or PRUNE_MISSING_AFTER_CHECKS <= 0:
+        raise ValueError(
+            f"SYNC_PRUNE_MISSING_AFTER_CHECKS must be a positive integer, got "
+            f"{_PRUNE_MISSING_AFTER_CHECKS_RAW!r}"
         )

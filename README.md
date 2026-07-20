@@ -29,6 +29,18 @@ turned out to clutter every synced item's notes field.
      If both sides changed a field to different values between two syncs,
      `SYNC_CONFLICT_WINNER` in `config.env` (`reminders` by default, or
      `todoist`) decides which one sticks.
+  3. Moves any pair that's been completed on both sides for longer than
+     `SYNC_ARCHIVE_AFTER_DAYS` (180 by default) into an archive section of
+     `state.json`. Archived pairs are no longer polled every run — that's
+     what keeps sync fast as your history of completed tasks grows — but
+     their ids are still remembered, so uncompleting one later resumes
+     syncing it instead of creating a duplicate.
+  4. Drops any pair whose reminder and/or task has been deleted, once
+     that's been confirmed for `SYNC_PRUNE_MISSING_AFTER_CHECKS` consecutive
+     runs (4 by default — about an hour at the 15-minute sync interval).
+     Unlike archiving, a deleted item has nothing left to reactivate (ids
+     are never reused), so it's removed from `state.json` outright rather
+     than kept around.
 - The Reminders side talks to EventKit through a small compiled Swift
   helper (`swift/reminders-bridge`), not AppleScript. AppleScript's
   Reminders support proved unreliable under testing — direct-by-name and
