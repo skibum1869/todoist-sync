@@ -38,9 +38,8 @@ if [ "$UPGRADE" = true ]; then
 fi
 
 if [ ! -x "$PROJECT_ROOT/.venv/bin/python" ]; then
-    echo "error: $PROJECT_ROOT/.venv not found." >&2
-    echo "Run the Setup steps in README.md first (venv + pip install)." >&2
-    exit 1
+    echo "Creating virtualenv..."
+    python3 -m venv "$PROJECT_ROOT/.venv"
 fi
 
 if [ ! -f "$PROJECT_ROOT/config.env" ]; then
@@ -55,11 +54,13 @@ if ! command -v swift >/dev/null 2>&1; then
     exit 1
 fi
 
+echo "Installing Python dependencies..."
+PIP_INSTALL_FLAGS=()
 if [ "$UPGRADE" = true ]; then
-    echo "Updating Python dependencies..."
-    "$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt" --upgrade
-    "$PROJECT_ROOT/.venv/bin/pip" install -e "$PROJECT_ROOT" --no-deps
+    PIP_INSTALL_FLAGS+=(--upgrade)
 fi
+"$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt" "${PIP_INSTALL_FLAGS[@]}"
+"$PROJECT_ROOT/.venv/bin/pip" install -e "$PROJECT_ROOT" --no-deps
 
 echo "Building reminders-bridge (Swift/EventKit helper)..."
 (cd "$PROJECT_ROOT/swift/reminders-bridge" && swift build -c release)

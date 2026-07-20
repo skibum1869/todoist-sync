@@ -100,19 +100,18 @@ var/                       generated at runtime — state.json, sync-out.log, sy
 ## Setup
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-./.venv/bin/pip install -e . --no-deps   # makes the todoist_sync package importable
-
 cp config.env.example config.env
 # edit config.env and set TODOIST_API_KEY
 # (Todoist -> Settings -> Integrations -> Developer)
 
-cd swift/reminders-bridge && swift build -c release && cd ../..
+./deploy/install.sh
 ```
 
-Building the Swift helper requires Xcode Command Line Tools
-(`xcode-select --install` if `swift --version` doesn't work).
+`deploy/install.sh` creates `.venv` if needed, installs the Python
+dependencies, builds the Swift helpers, and loads the LaunchAgents. It
+requires `config.env` to already exist (see above) and Xcode Command Line
+Tools for the Swift build (`xcode-select --install` if `swift --version`
+doesn't work).
 
 The first run will prompt macOS for Reminders access — grant it in
 System Settings > Privacy & Security > Reminders.
