@@ -1,11 +1,17 @@
 #!/bin/bash
-# Installs/uninstalls/upgrades the todoist-sync LaunchAgent for the current user.
+# Installs/uninstalls/updates the todoist-sync LaunchAgent for the current user.
 # Safe to re-run — reinstalls/reloads if already installed.
 #
 # Usage:
-#   ./deploy/install.sh              install and load
-#   ./deploy/install.sh --upgrade    pull latest code, update deps, then install and load
+#   ./deploy/install.sh              install and load (also the rebuild/reload step below)
+#   ./deploy/install.sh --update     pull latest code from git; run again afterward to rebuild/reload
+#   ./deploy/install.sh --upgrade    explicit alias for the default install/reload path
 #   ./deploy/install.sh --uninstall  unload and remove
+#
+# --update and --upgrade are deliberately separate: --update only ever pulls
+# code, it never touches requirements.txt's pinned dependency versions —
+# those are pinned on purpose and only change when someone edits the file
+# by hand.
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,28 +20,33 @@ PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 WAKE_LABEL="com.todoist-sync.wake-watcher.local"
 WAKE_PLIST_PATH="$HOME/Library/LaunchAgents/${WAKE_LABEL}.plist"
 
-if [ "${1:-}" = "--uninstall" ]; then
-    launchctl unload "$PLIST_PATH" 2>/dev/null || true
-    rm -f "$PLIST_PATH"
-    launchctl unload "$WAKE_PLIST_PATH" 2>/dev/null || true
-    rm -f "$WAKE_PLIST_PATH"
-    echo "Uninstalled: $LABEL, $WAKE_LABEL"
-    exit 0
-fi
-
-UPGRADE=false
-if [ "${1:-}" = "--upgrade" ]; then
-    UPGRADE=true
-fi
-
-if [ "$UPGRADE" = true ]; then
-    if [ -n "$(cd "$PROJECT_ROOT" && git status --porcelain)" ]; then
-        echo "error: uncommitted changes in $PROJECT_ROOT — commit or stash before upgrading." >&2
+case "${1:-}" in
+    --uninstall)
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        rm -f "$PLIST_PATH"
+        launchctl unload "$WAKE_PLIST_PATH" 2>/dev/null || true
+        rm -f "$WAKE_PLIST_PATH"
+        echo "Uninstalled: $LABEL, $WAKE_LABEL"
+        exit 0
+        ;;
+    --update)
+        if [ -n "$(cd "$PROJECT_ROOT" && git status --porcelain)" ]; then
+            echo "error: uncommitted changes in $PROJECT_ROOT — commit or stash before updating." >&2
+            exit 1
+        fi
+        echo "Pulling latest code..."
+        (cd "$PROJECT_ROOT" && git pull)
+        echo "Code updated. Run ./deploy/install.sh (or --upgrade) to rebuild and reload with it."
+        exit 0
+        ;;
+    "" | --upgrade)
+        ;;
+    *)
+        echo "error: unknown argument '${1}'" >&2
+        echo "Usage: $0 [--update|--upgrade|--uninstall]" >&2
         exit 1
-    fi
-    echo "Pulling latest code..."
-    (cd "$PROJECT_ROOT" && git pull)
-fi
+        ;;
+esac
 
 if [ ! -x "$PROJECT_ROOT/.venv/bin/python" ]; then
     echo "Creating virtualenv..."
@@ -55,11 +66,7 @@ if ! command -v swift >/dev/null 2>&1; then
 fi
 
 echo "Installing Python dependencies..."
-PIP_INSTALL_FLAGS=()
-if [ "$UPGRADE" = true ]; then
-    PIP_INSTALL_FLAGS+=(--upgrade)
-fi
-"$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt" "${PIP_INSTALL_FLAGS[@]}"
+"$PROJECT_ROOT/.venv/bin/pip" install -r "$PROJECT_ROOT/requirements.txt"
 "$PROJECT_ROOT/.venv/bin/pip" install -e "$PROJECT_ROOT" --no-deps
 
 echo "Building reminders-bridge (Swift/EventKit helper)..."
@@ -97,7 +104,7 @@ launchctl load "$WAKE_PLIST_PATH"
 
 echo "Installed and loaded: $LABEL (runs every 15 minutes)"
 echo "Installed and loaded: $WAKE_LABEL (syncs ~10s after wake from sleep)"
-echo "Logs: $PROJECT_ROOT/var/sync-out.log / var/sync-error.log"
+echo "Logs: $PROJECT_ROOT/var/sync.log"
 echo "To uninstall: ./deploy/install.sh --uninstall"
 echo
 echo "Note: the first sync run will prompt macOS for Reminders access —"
