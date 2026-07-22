@@ -5,8 +5,15 @@ from datetime import datetime
 
 import httpx
 from todoist_api_python.api import TodoistAPI
+from todoist_api_python.models import Task
 
 log = logging.getLogger(__name__)
+
+# get_task() below fetches this itself rather than through self.api.get_task():
+# a deleted Todoist task doesn't 404 — GET /tasks/{id} still returns 200 with
+# is_deleted=true in the raw JSON — but the SDK's Task model has no field for
+# it at all, silently dropping the one piece of information that matters here.
+_TASKS_URL = "https://api.todoist.com/api/v1/tasks"
 
 
 class TodoistBridge:
@@ -14,6 +21,8 @@ class TodoistBridge:
 
     def __init__(self, api_token: str):
         self.api = TodoistAPI(api_token)
+        self._token = api_token
+        self._client = httpx.Client()
 
     def get_or_create_project(self, name: str) -> str:
         for page in self.api.get_projects():
@@ -34,12 +43,20 @@ class TodoistBridge:
         # can't read/mutate a task outside the intended project — mirrors
         # the same confinement RemindersBridge applies via list_name.
         try:
-            task = self.api.get_task(task_id)
+            response = self._client.get(
+                f"{_TASKS_URL}/{task_id}", headers={"Authorization": f"Bearer {self._token}"}
+            )
+            response.raise_for_status()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 log.debug("Todoist task %s not found (404) — treating as deleted", task_id)
                 return None
             raise
+        data = response.json()
+        if data.get("is_deleted"):
+            log.debug("Todoist task %s is_deleted=true — treating as deleted", task_id)
+            return None
+        task = Task.from_dict(data)
         if task.project_id != project_id:
             log.warning(
                 "Todoist task %s belongs to project %s, not %s — treating as deleted",
