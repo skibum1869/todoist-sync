@@ -109,7 +109,7 @@ class FakeTodoistBridge:
         # Mirrors the real Todoist API: only ever returns open tasks.
         return [t for t in STORE.tasks.values() if t.completed_at is None]
 
-    def get_task(self, task_id):
+    def get_task(self, task_id, project_id):
         return STORE.tasks.get(task_id)
 
     def create_task(self, project_id, content, description, due_dt=None, all_day=False):

@@ -144,6 +144,16 @@ def _deserialize_due(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def _redact_for_log(field_name: str, value):
+    # Notes/description content is the most likely place for genuinely
+    # sensitive text — unlike a title (short, needed to tell items apart in
+    # a trace), it's rarely needed to diagnose a sync bug, so DEBUG logs a
+    # size instead of the raw text.
+    if field_name == "body" and value:
+        return f"<{len(value)} chars>"
+    return value
+
+
 def _reconcile_scalar(
     last_value, r_value, t_value, set_todoist, set_reminders, *, field_name="value", pair_label="?"
 ):
@@ -161,21 +171,37 @@ def _reconcile_scalar(
         winner = r_value if CONFLICT_WINNER == "reminders" else t_value
         # Both sides changed to different values: whichever wasn't chosen
         # gets silently overwritten. Worth a WARNING (not just DEBUG) since
-        # that's a real edit being discarded, not routine propagation.
+        # that's a real edit being discarded, not routine propagation — but
+        # the values themselves are personal content (titles/notes), so
+        # keep those out of the default-visible line and behind DEBUG.
         log.warning(
-            "Conflict on %s for pair %s: reminders=%r, todoist=%r — %s wins (SYNC_CONFLICT_WINNER)",
+            "Conflict on %s for pair %s: %s wins (SYNC_CONFLICT_WINNER)",
             field_name,
             pair_label,
-            r_value,
-            t_value,
             CONFLICT_WINNER,
+        )
+        log.debug(
+            "Conflict detail for pair %s: reminders=%r, todoist=%r",
+            pair_label,
+            _redact_for_log(field_name, r_value),
+            _redact_for_log(field_name, t_value),
         )
     elif r_changed:
         winner = r_value
-        log.debug("Pair %s: %s changed in Reminders -> %r, propagating to Todoist", pair_label, field_name, winner)
+        log.debug(
+            "Pair %s: %s changed in Reminders -> %r, propagating to Todoist",
+            pair_label,
+            field_name,
+            _redact_for_log(field_name, winner),
+        )
     else:
         winner = t_value
-        log.debug("Pair %s: %s changed in Todoist -> %r, propagating to Reminders", pair_label, field_name, winner)
+        log.debug(
+            "Pair %s: %s changed in Todoist -> %r, propagating to Reminders",
+            pair_label,
+            field_name,
+            _redact_for_log(field_name, winner),
+        )
 
     if winner != t_value:
         set_todoist(winner)
@@ -313,7 +339,7 @@ def main() -> None:
     to_prune = []
     for pair in pairs:
         r = reminders.get_reminder(pair["reminder_id"])
-        t = todoist.get_task(pair["task_id"])
+        t = todoist.get_task(pair["task_id"], project_id)
         if r is None or t is None:
             # get_reminder/get_task only return None on a confirmed 404, not
             # on a transient error (those raise instead) — so this is a real
@@ -413,11 +439,12 @@ def main() -> None:
             # Both sides changed to different values since the last sync —
             # genuine conflict, resolved per CONFLICT_WINNER.
             log.warning(
-                "Conflict on due date for pair %s: reminders=%r, todoist=%r — %s wins (SYNC_CONFLICT_WINNER)",
+                "Conflict on due date for pair %s: %s wins (SYNC_CONFLICT_WINNER)",
                 _pair_label(pair),
-                r_due,
-                t_due,
                 CONFLICT_WINNER,
+            )
+            log.debug(
+                "Conflict detail for pair %s: reminders=%r, todoist=%r", _pair_label(pair), r_due, t_due
             )
             if CONFLICT_WINNER == "todoist":
                 winning_due, winning_all_day = t_due, t_all_day

@@ -25,8 +25,25 @@ class RemindersUnavailableError(RuntimeError):
     of treating it as an unclassified sync failure."""
 
 
+def _redact_args_for_log(args: tuple[str, ...]) -> str:
+    # --body carries notes content — the most likely place for genuinely
+    # sensitive text, and rarely needed to diagnose a bridge-command
+    # failure — so log its size instead of the raw text. --name (title) is
+    # left as-is: short, and needed to tell items apart in a trace.
+    out = []
+    redact_next = False
+    for a in args:
+        if redact_next:
+            out.append(f"<{len(a)} chars>")
+            redact_next = False
+            continue
+        out.append(a)
+        redact_next = a == "--body"
+    return " ".join(out)
+
+
 def _run(*args: str) -> str:
-    log.debug("reminders-bridge: %s", " ".join(args))
+    log.debug("reminders-bridge: %s", _redact_args_for_log(args))
     if not _BINARY.exists():
         raise RemindersUnavailableError(
             f"{_BINARY} not found — build it first: "

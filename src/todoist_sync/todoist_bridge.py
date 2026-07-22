@@ -29,14 +29,26 @@ class TodoistBridge:
             tasks.extend(page)
         return tasks
 
-    def get_task(self, task_id: str):
+    def get_task(self, task_id: str, project_id: str):
+        # Scoped to project_id so a tampered or stale state.json entry
+        # can't read/mutate a task outside the intended project — mirrors
+        # the same confinement RemindersBridge applies via list_name.
         try:
-            return self.api.get_task(task_id)
+            task = self.api.get_task(task_id)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 log.debug("Todoist task %s not found (404) — treating as deleted", task_id)
                 return None
             raise
+        if task.project_id != project_id:
+            log.warning(
+                "Todoist task %s belongs to project %s, not %s — treating as deleted",
+                task_id,
+                task.project_id,
+                project_id,
+            )
+            return None
+        return task
 
     def create_task(
         self,
