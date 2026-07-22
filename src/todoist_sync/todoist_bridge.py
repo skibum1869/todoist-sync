@@ -22,7 +22,10 @@ class TodoistBridge:
     def __init__(self, api_token: str):
         self.api = TodoistAPI(api_token)
         self._token = api_token
-        self._client = httpx.Client()
+        self._client = httpx.Client(timeout=30.0)
+
+    def close(self) -> None:
+        self._client.close()
 
     def get_or_create_project(self, name: str) -> str:
         for page in self.api.get_projects():

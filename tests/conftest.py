@@ -132,6 +132,9 @@ class FakeTodoistBridge:
     def uncomplete_task(self, task_id):
         STORE.tasks[task_id].completed_at = None
 
+    def close(self):
+        pass
+
 
 STORE = FakeStore()
 

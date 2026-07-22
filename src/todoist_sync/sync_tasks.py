@@ -539,6 +539,8 @@ def main() -> None:
             len(to_prune),
         )
 
+    todoist.close()
+
 
 if __name__ == "__main__":
     lock_file = _acquire_lock()
@@ -569,8 +571,10 @@ if __name__ == "__main__":
             # HTTPStatusError's own message is just "<status> for url:
             # <url>" — the actual reason (validation error, rate limit
             # detail, etc.) is in the response body and would otherwise
-            # never reach the log.
-            log.exception("Sync failed: %s", e.response.text)
+            # never reach the log. Truncate to 200 chars so any task content
+            # echoed back in a validation error doesn't flood the log.
+            body = e.response.text[:200]
+            log.warning("Sync failed: HTTP %d — %s", e.response.status_code, body)
         sys.exit(1)
     except RemindersUnavailableError as e:
         log.warning("Sync failed: %s", e)

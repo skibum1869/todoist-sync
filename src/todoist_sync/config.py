@@ -1,4 +1,5 @@
 import logging
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,10 +10,32 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = PROJECT_ROOT / "config.env"
 load_dotenv(dotenv_path=ENV_PATH)
 
-# config.env holds a live API key — re-assert owner-only permissions on
+# config.env may hold a live API key — re-assert owner-only permissions on
 # every run in case it was ever created/restored with a looser default.
 if ENV_PATH.exists():
     ENV_PATH.chmod(0o600)
+
+_KEYCHAIN_SERVICE = "todoist-sync"
+_KEYCHAIN_ACCOUNT = "default"
+
+
+def _load_from_keychain() -> str | None:
+    """Read the Todoist API token from the macOS Keychain.
+
+    Returns None if the Keychain item doesn't exist or the `security`
+    tool is unavailable (non-macOS). A CalledProcessError from `security`
+    means the item wasn't found (exit code 44) — not a crash — so we
+    treat it the same as "not set" and fall through to config.env.
+    """
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", _KEYCHAIN_SERVICE, "-a", _KEYCHAIN_ACCOUNT, "-w"],
+            capture_output=True, text=True, check=True,
+        )
+        return result.stdout.strip() or None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 LIST_NAME = os.environ.get("SYNC_LIST_NAME", "Siri Sync")
 
@@ -31,7 +54,13 @@ LOCK_PATH = VAR_DIR / "sync.lock"
 # logging is configured. Raising here at import time — before any log
 # handler exists — would send a bad config.env's traceback straight to
 # stderr, which launchd doesn't capture, so it would vanish with no trace.
-TODOIST_API_KEY = os.environ.get("TODOIST_API_KEY")
+#
+# Keychain is the preferred storage location (encrypted, OS-managed).
+# config.env / environment variable is the fallback — still works on macOS
+# and is the only option on non-macOS dev environments.
+TODOIST_API_KEY = _load_from_keychain()
+if TODOIST_API_KEY is None:
+    TODOIST_API_KEY = os.environ.get("TODOIST_API_KEY")
 CONFLICT_WINNER = os.environ.get("SYNC_CONFLICT_WINNER", "reminders").strip().lower()
 
 _ARCHIVE_AFTER_DAYS_RAW = os.environ.get("SYNC_ARCHIVE_AFTER_DAYS", "180")
@@ -56,7 +85,11 @@ LOG_LEVEL = getattr(logging, _LOG_LEVEL_RAW, None) if _LOG_LEVEL_RAW in ("DEBUG"
 
 def validate() -> None:
     if not TODOIST_API_KEY:
-        raise RuntimeError("TODOIST_API_KEY is not set — check config.env")
+        raise RuntimeError(
+            "TODOIST_API_KEY is not set — store it in macOS Keychain "
+            "(security add-generic-password -s todoist-sync -a default -w <token>) "
+            "or set it in config.env"
+        )
     if CONFLICT_WINNER not in ("reminders", "todoist"):
         raise ValueError(
             f"SYNC_CONFLICT_WINNER must be 'reminders' or 'todoist', got {CONFLICT_WINNER!r}"

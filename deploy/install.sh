@@ -53,10 +53,36 @@ if [ ! -x "$PROJECT_ROOT/.venv/bin/python" ]; then
     python3 -m venv "$PROJECT_ROOT/.venv"
 fi
 
+# The Todoist API token is read from macOS Keychain at runtime (see
+# config.py).  config.env is still supported as a fallback — both for
+# non-macOS dev and for anyone who hasn't migrated yet.
+KEYCHAIN_TOKEN="$(security find-generic-password -s todoist-sync -a default -w 2>/dev/null || true)"
+
+if [ -z "$KEYCHAIN_TOKEN" ]; then
+    if [ -f "$PROJECT_ROOT/config.env" ] && grep -q '^TODOIST_API_KEY=".' "$PROJECT_ROOT/config.env" 2>/dev/null; then
+        # Migrate the existing token from config.env into Keychain.
+        TOKEN="$(grep '^TODOIST_API_KEY=' "$PROJECT_ROOT/config.env" | sed 's/^TODOIST_API_KEY="\(.*\)"$/\1/')"
+        if [ -n "$TOKEN" ] && [ "$TOKEN" != "YOUR_API_KEY_HERE" ]; then
+            security add-generic-password -s todoist-sync -a default -w "$TOKEN" -U
+            echo "Migrated API token from config.env to macOS Keychain."
+            echo "You can now remove the TODOIST_API_KEY line from config.env."
+        fi
+    else
+        echo "No Todoist API token found in Keychain or config.env."
+        echo "Enter your Todoist API token (input hidden):"
+        read -s TOKEN
+        if [ -z "$TOKEN" ]; then
+            echo "error: no token entered." >&2
+            exit 1
+        fi
+        security add-generic-password -s todoist-sync -a default -w "$TOKEN" -U
+        echo "Token stored in macOS Keychain."
+    fi
+fi
+
 if [ ! -f "$PROJECT_ROOT/config.env" ]; then
-    echo "error: $PROJECT_ROOT/config.env not found." >&2
-    echo "Copy config.env.example to config.env and set TODOIST_API_KEY first." >&2
-    exit 1
+    echo "Copying config.env.example to config.env (for non-API settings)..."
+    cp "$PROJECT_ROOT/config.env.example" "$PROJECT_ROOT/config.env"
 fi
 
 if ! command -v swift >/dev/null 2>&1; then
@@ -83,8 +109,8 @@ codesign -s - "$PROJECT_ROOT/deploy/todoist-sync" 2>/dev/null || true
 mkdir -p "$PROJECT_ROOT/var"
 
 sed \
-    -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
-    -e "s|__LABEL__|$LABEL|g" \
+    -e "s@__PROJECT_ROOT__@$PROJECT_ROOT@g" \
+    -e "s@__LABEL__@$LABEL@g" \
     "$PROJECT_ROOT/deploy/com.todoist-sync.plist.template" > "$PLIST_PATH"
 
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
@@ -95,8 +121,8 @@ launchctl load "$PLIST_PATH"
 # that observes NSWorkspace.didWakeNotification and fires a sync ~10s after
 # wake, so pair it with the timer above rather than replacing it.
 sed \
-    -e "s|__PROJECT_ROOT__|$PROJECT_ROOT|g" \
-    -e "s|__LABEL__|$WAKE_LABEL|g" \
+    -e "s@__PROJECT_ROOT__@$PROJECT_ROOT@g" \
+    -e "s@__LABEL__@$WAKE_LABEL@g" \
     "$PROJECT_ROOT/deploy/com.todoist-sync.wake-watcher.plist.template" > "$WAKE_PLIST_PATH"
 
 launchctl unload "$WAKE_PLIST_PATH" 2>/dev/null || true
