@@ -128,12 +128,14 @@ Scheduled via a launchd LaunchAgent rather than cron, since both EventKit
 and the Todoist client need to run in the logged-in user session. It runs
 every 15 minutes and logs to `var/sync.log` — a rotating log (1 MB cap, 3
 backups kept, ~4 MB max) written directly by the script itself, not via
-launchd's raw stdout/stderr redirection — so it won't grow unbounded, but
-running the script manually in a terminal no longer prints anything live;
-`tail -f var/sync.log` instead. Each line carries its level
-(`INFO`/`WARNING`/`ERROR`), so `grep ERROR var/sync.log` reproduces just
-the failures/tracebacks — safe to share when reporting an issue, since it
-won't also pull in routine sync history.
+launchd's raw stdout/stderr redirection — so it won't grow unbounded.
+Running the script manually in a terminal also mirrors the same log
+records live to the console (launchd itself never sees this — its plist
+sets no `StandardOutPath`/`StandardErrorPath` — so a scheduled run is
+unaffected); `tail -f var/sync.log` still works too. Each line carries its
+level (`INFO`/`WARNING`/`ERROR`), so `grep ERROR var/sync.log` reproduces
+just the failures/tracebacks — safe to share when reporting an issue,
+since it won't also pull in routine sync history.
 
 By default (`SYNC_LOG_LEVEL=INFO` in `config.env`) each run logs just a
 "starting" line and a one-line summary (`Sync complete: no changes`, or a

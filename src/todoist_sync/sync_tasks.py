@@ -53,6 +53,15 @@ def _configure_logging() -> None:
     root.setLevel(effective_level)
     root.addHandler(handler)
 
+    # launchd runs this headless with nothing capturing stdout/stderr (the
+    # plist sets no StandardOutPath/StandardErrorPath), so this only ever
+    # shows up for someone running the script manually in a terminal —
+    # otherwise a run's outcome is invisible unless you go tail the file.
+    if sys.stderr.isatty():
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+        root.addHandler(console_handler)
+
     # httpx/httpcore log every request at INFO with no handler of their own,
     # so without this they'd propagate straight into root and flood the log
     # with one line per Todoist API call. Only let that through in DEBUG,
