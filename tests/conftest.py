@@ -12,10 +12,10 @@ from todoist_sync import sync_tasks
 
 @pytest.fixture(autouse=True, scope="session")
 def _no_real_log_files():
-    # sync_tasks._configure_logging() attaches real RotatingFileHandlers to
+    # sync_tasks._configure_logging() attaches a real RotatingFileHandler to
     # the root logger at import time (not inside main()), pointed at the
-    # actual var/sync-out.log / var/sync-error.log. Without this, every
-    # test that calls main() would append real log lines to those files.
+    # actual var/sync.log. Without this, every test that calls main() would
+    # append real log lines to that file.
     logging.getLogger().handlers.clear()
 
 

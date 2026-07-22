@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _BINARY = (
     Path(__file__).resolve().parent.parent.parent
@@ -23,6 +26,7 @@ class RemindersUnavailableError(RuntimeError):
 
 
 def _run(*args: str) -> str:
+    log.debug("reminders-bridge: %s", " ".join(args))
     if not _BINARY.exists():
         raise RemindersUnavailableError(
             f"{_BINARY} not found — build it first: "
@@ -38,6 +42,10 @@ def _run(*args: str) -> str:
                 "Reminders access not granted — check System Settings > "
                 "Privacy & Security > Reminders."
             ) from e
+        # CalledProcessError's own str() is just "Command '...' returned
+        # non-zero exit status N" — the helper's actual error message is in
+        # stderr and would otherwise never reach the log.
+        log.error("reminders-bridge command failed: %s", (e.stderr or "").strip())
         raise
     return result.stdout.strip()
 

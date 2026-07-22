@@ -94,7 +94,7 @@ src/todoist_sync/          Python package — Todoist API, sync logic, state, CL
 swift/reminders-bridge/    Swift/EventKit helper the Python side shells out to for all Reminders access
 swift/wake-watcher/        Swift/NSWorkspace helper that fires a sync shortly after the Mac wakes
 deploy/                    launchd LaunchAgents, wrapper script, installer
-var/                       generated at runtime — state.json, sync-out.log, sync-error.log
+var/                       generated at runtime — state.json, sync.log
 ```
 
 ## Setup
@@ -126,14 +126,22 @@ System Settings > Privacy & Security > Reminders.
 
 Scheduled via a launchd LaunchAgent rather than cron, since both EventKit
 and the Todoist client need to run in the logged-in user session. It runs
-every 15 minutes and logs to `var/sync-out.log` (routine activity) /
-`var/sync-error.log` (actual failures/tracebacks only — safe to share when
-reporting an issue, since it won't also contain the full routine sync
-history). Both are rotating logs (1 MB cap, 3 backups kept, ~4 MB max per
-file) written directly by the script itself, not via launchd's raw
-stdout/stderr redirection — so they won't grow unbounded, but running the
-script manually in a terminal no longer prints anything live; `tail -f
-var/sync-out.log` instead.
+every 15 minutes and logs to `var/sync.log` — a rotating log (1 MB cap, 3
+backups kept, ~4 MB max) written directly by the script itself, not via
+launchd's raw stdout/stderr redirection — so it won't grow unbounded, but
+running the script manually in a terminal no longer prints anything live;
+`tail -f var/sync.log` instead. Each line carries its level
+(`INFO`/`WARNING`/`ERROR`), so `grep ERROR var/sync.log` reproduces just
+the failures/tracebacks — safe to share when reporting an issue, since it
+won't also pull in routine sync history.
+
+By default (`SYNC_LOG_LEVEL=INFO` in `config.env`) each run logs just a
+"starting" line and a one-line summary (`Sync complete: no changes`, or a
+breakdown if anything actually synced). Set `SYNC_LOG_LEVEL=DEBUG` to
+temporarily add per-query/per-pair detail — every Reminders/Todoist API
+call, which value won a conflict and why, and which specific pair was
+archived or pruned — useful when troubleshooting, noisy to leave on
+permanently.
 
 The agent points at `deploy/todoist-sync`, a small wrapper script, rather
 than the venv's Python binary directly — otherwise macOS's Login Items list

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,8 +20,7 @@ VAR_DIR = PROJECT_ROOT / "var"
 VAR_DIR.mkdir(exist_ok=True)
 VAR_DIR.chmod(0o700)
 STATE_PATH = VAR_DIR / "state.json"
-LOG_OUT_PATH = VAR_DIR / "sync-out.log"
-LOG_ERROR_PATH = VAR_DIR / "sync-error.log"
+LOG_PATH = VAR_DIR / "sync.log"
 NETWORK_DOWN_MARKER = VAR_DIR / "network-down-since"
 AUTH_FAILURE_MARKER = VAR_DIR / "auth-failure-since"
 REMINDERS_ACCESS_MARKER = VAR_DIR / "reminders-access-down-since"
@@ -46,6 +46,13 @@ try:
 except ValueError:
     PRUNE_MISSING_AFTER_CHECKS = None
 
+# INFO (default) is the terse "starting" + one-line summary. DEBUG adds
+# per-query/per-pair detail (bridge calls, conflict resolutions, individual
+# archive/prune actions) plus httpx's own request logging — off by default
+# since it's meant for a temporary troubleshooting window, not routine use.
+_LOG_LEVEL_RAW = os.environ.get("SYNC_LOG_LEVEL", "INFO").strip().upper()
+LOG_LEVEL = getattr(logging, _LOG_LEVEL_RAW, None) if _LOG_LEVEL_RAW in ("DEBUG", "INFO", "WARNING", "ERROR") else None
+
 
 def validate() -> None:
     if not TODOIST_API_KEY:
@@ -62,4 +69,8 @@ def validate() -> None:
         raise ValueError(
             f"SYNC_PRUNE_MISSING_AFTER_CHECKS must be a positive integer, got "
             f"{_PRUNE_MISSING_AFTER_CHECKS_RAW!r}"
+        )
+    if LOG_LEVEL is None:
+        raise ValueError(
+            f"SYNC_LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR, got {_LOG_LEVEL_RAW!r}"
         )

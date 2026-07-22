@@ -19,8 +19,8 @@ from .config import (
     CONFLICT_WINNER,
     LIST_NAME,
     LOCK_PATH,
-    LOG_ERROR_PATH,
-    LOG_OUT_PATH,
+    LOG_LEVEL,
+    LOG_PATH,
     NETWORK_DOWN_MARKER,
     PRUNE_MISSING_AFTER_CHECKS,
     REMINDERS_ACCESS_MARKER,
@@ -37,41 +37,29 @@ _MAX_LOG_BYTES = 1_000_000  # 1 MB per file
 _LOG_BACKUP_COUNT = 3
 
 
-class _MaxLevelFilter(logging.Filter):
-    """Excludes records at or above the given level, for the routine-log
-    handler so it doesn't duplicate what the error log already has."""
-
-    def __init__(self, below_level: int):
-        super().__init__()
-        self.below_level = below_level
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno < self.below_level
-
-
 def _configure_logging() -> None:
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    # Write directly to the log files (rotating, capped) rather than through
+    # Write directly to the log file (rotating, capped) rather than through
     # stdout/stderr + launchd's StandardOutPath/StandardErrorPath, which had
     # no size limit and would grow forever.
-    info_handler = logging.handlers.RotatingFileHandler(
-        LOG_OUT_PATH, maxBytes=_MAX_LOG_BYTES, backupCount=_LOG_BACKUP_COUNT
+    handler = logging.handlers.RotatingFileHandler(
+        LOG_PATH, maxBytes=_MAX_LOG_BYTES, backupCount=_LOG_BACKUP_COUNT
     )
-    info_handler.setLevel(logging.INFO)
-    info_handler.addFilter(_MaxLevelFilter(logging.ERROR))
-    info_handler.setFormatter(formatter)
+    handler.setFormatter(formatter)
 
-    error_handler = logging.handlers.RotatingFileHandler(
-        LOG_ERROR_PATH, maxBytes=_MAX_LOG_BYTES, backupCount=_LOG_BACKUP_COUNT
-    )
-    error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
-
+    effective_level = LOG_LEVEL or logging.INFO
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.addHandler(info_handler)
-    root.addHandler(error_handler)
+    root.setLevel(effective_level)
+    root.addHandler(handler)
+
+    # httpx/httpcore log every request at INFO with no handler of their own,
+    # so without this they'd propagate straight into root and flood the log
+    # with one line per Todoist API call. Only let that through in DEBUG,
+    # where it doubles as the per-query trace for the Todoist side.
+    third_party_level = logging.DEBUG if effective_level <= logging.DEBUG else logging.WARNING
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(third_party_level)
 
 
 _configure_logging()
@@ -156,7 +144,9 @@ def _deserialize_due(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-def _reconcile_scalar(last_value, r_value, t_value, set_todoist, set_reminders):
+def _reconcile_scalar(
+    last_value, r_value, t_value, set_todoist, set_reminders, *, field_name="value", pair_label="?"
+):
     """3-way merge for a simple equality-comparable field: propagate
     whichever side changed since last_value, or resolve a genuine conflict
     (both changed, to different values) per CONFLICT_WINNER. Returns
@@ -169,10 +159,23 @@ def _reconcile_scalar(last_value, r_value, t_value, set_todoist, set_reminders):
 
     if r_changed and t_changed and r_value != t_value:
         winner = r_value if CONFLICT_WINNER == "reminders" else t_value
+        # Both sides changed to different values: whichever wasn't chosen
+        # gets silently overwritten. Worth a WARNING (not just DEBUG) since
+        # that's a real edit being discarded, not routine propagation.
+        log.warning(
+            "Conflict on %s for pair %s: reminders=%r, todoist=%r — %s wins (SYNC_CONFLICT_WINNER)",
+            field_name,
+            pair_label,
+            r_value,
+            t_value,
+            CONFLICT_WINNER,
+        )
     elif r_changed:
         winner = r_value
+        log.debug("Pair %s: %s changed in Reminders -> %r, propagating to Todoist", pair_label, field_name, winner)
     else:
         winner = t_value
+        log.debug("Pair %s: %s changed in Todoist -> %r, propagating to Reminders", pair_label, field_name, winner)
 
     if winner != t_value:
         set_todoist(winner)
@@ -181,9 +184,20 @@ def _reconcile_scalar(last_value, r_value, t_value, set_todoist, set_reminders):
     return winner, True
 
 
+def _pair_label(pair: dict) -> str:
+    return f"r={pair['reminder_id']}/t={pair['task_id']}"
+
+
 def main() -> None:
     log.info("todoist-sync v%s starting", __version__)
     config.validate()
+    log.debug(
+        "config: list=%r conflict_winner=%r archive_after_days=%d prune_after_checks=%d",
+        LIST_NAME,
+        CONFLICT_WINNER,
+        ARCHIVE_AFTER_DAYS,
+        PRUNE_MISSING_AFTER_CHECKS,
+    )
     reminders = RemindersBridge(LIST_NAME)
     todoist = TodoistBridge(TODOIST_API_KEY)
     project_id = todoist.get_or_create_project(LIST_NAME)
@@ -199,6 +213,7 @@ def main() -> None:
     archived_by_task = {p["task_id"]: p for p in archive}
 
     def _unarchive(pair: dict) -> None:
+        log.debug("Pair %s: reactivated from archive", _pair_label(pair))
         archive.remove(pair)
         del archived_by_reminder[pair["reminder_id"]]
         del archived_by_task[pair["task_id"]]
@@ -313,6 +328,12 @@ def main() -> None:
             # unlike a completed pair, a deleted one has no id worth
             # matching a reactivation against.
             pair["missing_checks"] = pair.get("missing_checks", 0) + 1
+            log.debug(
+                "Pair %s: reminder or task missing (check %d/%d)",
+                _pair_label(pair),
+                pair["missing_checks"],
+                PRUNE_MISSING_AFTER_CHECKS,
+            )
             if pair["missing_checks"] >= PRUNE_MISSING_AFTER_CHECKS:
                 to_prune.append(pair)
             continue
@@ -338,6 +359,8 @@ def main() -> None:
                 set_reminders=lambda v: (
                     reminders.complete_reminder(r["id"]) if v else reminders.uncomplete_reminder(r["id"])
                 ),
+                field_name="completed",
+                pair_label=_pair_label(pair),
             )
             pair["completed"] = new_completed
             if completed_changed:
@@ -358,6 +381,8 @@ def main() -> None:
             t.content,
             set_todoist=lambda v: todoist.set_task_content(t.id, v),
             set_reminders=lambda v: reminders.set_name(r["id"], v),
+            field_name="name",
+            pair_label=_pair_label(pair),
         )
         pair["name"] = new_name
         if name_changed:
@@ -369,6 +394,8 @@ def main() -> None:
             t.description or "",
             set_todoist=lambda v: todoist.set_task_description(t.id, v),
             set_reminders=lambda v: reminders.set_body(r["id"], v),
+            field_name="body",
+            pair_label=_pair_label(pair),
         )
         pair["body"] = new_body
         if body_changed:
@@ -385,6 +412,13 @@ def main() -> None:
         if r_changed and t_changed and not _due_equal(r_due, r_all_day, t_due, t_all_day):
             # Both sides changed to different values since the last sync —
             # genuine conflict, resolved per CONFLICT_WINNER.
+            log.warning(
+                "Conflict on due date for pair %s: reminders=%r, todoist=%r — %s wins (SYNC_CONFLICT_WINNER)",
+                _pair_label(pair),
+                r_due,
+                t_due,
+                CONFLICT_WINNER,
+            )
             if CONFLICT_WINNER == "todoist":
                 winning_due, winning_all_day = t_due, t_all_day
                 if t_due is not None:
@@ -396,10 +430,12 @@ def main() -> None:
                     todoist.set_task_due(t.id, r_due, r_all_day)
                     due_synced += 1
         elif r_changed and r_due is not None:
+            log.debug("Pair %s: due date changed in Reminders -> %r, propagating to Todoist", _pair_label(pair), r_due)
             todoist.set_task_due(t.id, r_due, r_all_day)
             due_synced += 1
             winning_due, winning_all_day = r_due, r_all_day
         elif t_changed and t_due is not None:
+            log.debug("Pair %s: due date changed in Todoist -> %r, propagating to Reminders", _pair_label(pair), t_due)
             reminders.set_due_date(r["id"], t_due, t_all_day)
             due_synced += 1
             winning_due, winning_all_day = t_due, t_all_day
@@ -423,6 +459,7 @@ def main() -> None:
     #    kept only so a later reactivation (see step 1) is recognized
     #    instead of spawning a duplicate.
     for pair in to_archive:
+        log.debug("Pair %s: archived (completed on both sides past SYNC_ARCHIVE_AFTER_DAYS)", _pair_label(pair))
         pairs.remove(pair)
         archive.append(pair)
 
@@ -430,25 +467,41 @@ def main() -> None:
     #    longer than SYNC_PRUNE_MISSING_AFTER_DAYS. These are removed
     #    outright, not archived — there's nothing left to reactivate.
     for pair in to_prune:
+        log.debug("Pair %s: pruned (missing for %d consecutive checks)", _pair_label(pair), pair["missing_checks"])
         pairs.remove(pair)
 
     state.save_state(STATE_PATH, pairs, archive)
     _clear_failure_markers()
 
-    log.info(
-        "Sync complete: %d reminder(s) -> Todoist, %d task(s) -> Reminders, "
-        "%d completion(s) synced, %d due date(s) synced, %d title(s) synced, "
-        "%d note(s) synced, %d reactivated from archive, %d archived, %d pruned",
-        created_in_todoist,
-        created_in_reminders,
-        completed_synced,
-        due_synced,
-        name_synced,
-        notes_synced,
-        reactivated,
-        len(to_archive),
-        len(to_prune),
-    )
+    if not any(
+        (
+            created_in_todoist,
+            created_in_reminders,
+            completed_synced,
+            due_synced,
+            name_synced,
+            notes_synced,
+            reactivated,
+            to_archive,
+            to_prune,
+        )
+    ):
+        log.info("Sync complete: no changes")
+    else:
+        log.info(
+            "Sync complete: %d reminder(s) -> Todoist, %d task(s) -> Reminders, "
+            "%d completion(s) synced, %d due date(s) synced, %d title(s) synced, "
+            "%d note(s) synced, %d reactivated from archive, %d archived, %d pruned",
+            created_in_todoist,
+            created_in_reminders,
+            completed_synced,
+            due_synced,
+            name_synced,
+            notes_synced,
+            reactivated,
+            len(to_archive),
+            len(to_prune),
+        )
 
 
 if __name__ == "__main__":
@@ -477,7 +530,11 @@ if __name__ == "__main__":
                 "Todoist API token invalid or expired — check config.env.",
             )
         else:
-            log.exception("Sync failed")
+            # HTTPStatusError's own message is just "<status> for url:
+            # <url>" — the actual reason (validation error, rate limit
+            # detail, etc.) is in the response body and would otherwise
+            # never reach the log.
+            log.exception("Sync failed: %s", e.response.text)
         sys.exit(1)
     except RemindersUnavailableError as e:
         log.warning("Sync failed: %s", e)
